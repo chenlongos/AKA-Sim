@@ -134,6 +134,18 @@ const SimPage = () => {
         createTarget(frontX, frontY);
     };
 
+    const mapActionToCommand = (vec: number[]) => {
+        if (!Array.isArray(vec) || vec.length === 0) return "stop"
+        const v0 = vec[0] ?? 0
+        const v1 = vec[1] ?? 0
+        const magnitude = Math.abs(v0) + Math.abs(v1)
+        if (magnitude < 0.1) return "stop"
+        if (Math.abs(v0) >= Math.abs(v1)) {
+            return v0 >= 0 ? "up" : "down"
+        }
+        return v1 >= 0 ? "right" : "left"
+    }
+
     useEffect(() => {
         getCarState()
         socket.on('car_state', (car: Car) => {
