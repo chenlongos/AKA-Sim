@@ -1,6 +1,22 @@
 # 安装指南
 本指南旨在帮助不同系统的开发者快速搭建 MuJoCo 虚拟仿真环境，重点针对 Linux (Debian/WSL) 进行了优化。
 
+如果使用强化学习,推荐安装如下pip包
+```shell
+# 提供强化学习(RL)的标准化环境接口
+pip install gymnasium
+
+# 录制视频或制作 GIF 动图
+pip install imageio
+
+# 处理庞大的矩阵和数组数学运算
+pip install numpy
+
+# 深度学习框架
+pip install torch  
+```
+
+
 
 ## Linux 安装 (Debian/WSL)
 
@@ -138,8 +154,6 @@ conda activate mujoco
 
 ```shell
 pip install mujoco
-pip install gymnasium
-pip install imageio
 ```
 
 4. 用代码测试
@@ -177,4 +191,84 @@ mjpython test_mujoco.py
 
 ![mac_init](./images/mac_init.png)
 
+
 ## Windows 安装
+Windows 用户有两种选择：快速查看或 Python 开发环境（推荐两者都做）
+
+### A. 快速查看 (免配置)
+
+1. 下载并解压 MuJoCo[点击下载MuJoCo 3.5.0 Windows 压缩包](https://github.com/google-deepmind/mujoco/releases/download/3.5.0/mujoco-3.5.0-windows-x86_64.zip)
+
+sha256校验：mujoco-3.5.0-windows-x86_64.zip.sha256
+877d0dfbceac3de90a874c41e0f20c568d104e8ca19de955c0482e3b63832519 
+
+2. 解压后双击 `bin/simulate.exe`
+
+![windows_init](./images/windows_init.png)
+
+3. 双击上图的`simulate.exe`后，会同时打开两个窗口  
+**注意：这里的shell窗口不要关闭**（最小化即可）
+
+![windows_init1](./images/windows_init_1.png)
+
+4. 鼠标拖拽，`mujoco-3.5.0-windows-x86_64/model/humanoid/humanoid.xml` ，下的文件到MuJoCo窗口，即可查看效果
+
+![windows_init2](./images/windows_init_2.png)
+
+---
+
+### B. 开发环境 (推荐使用PyCharm + Miniconda使用)
+
+1. 安装环境
+
+**安装 Miniconda**：前往 [官方下载](https://docs.anaconda.net.cn/miniconda/install/)
+
+**安装 PyCharm**：前往 [官方下载](https://www.jetbrains.com/pycharm/download/#section=windows)
+   
+2. **创建环境**：
+
+在Anaconda Powershell Prompt 或 Anaconda Prompt 中执行以下命令：
+
+    ```
+    conda create -n mujoco_env python=3.10 -y
+    conda activate mujoco_env
+    ```
+
+3. **安装库**：
+    
+    ```
+    pip install mujoco
+    pip install gymnasium
+    pip install imageio
+    ```
+    
+4. **在PyCharm环境下运行代码测试**
+
+创建 test_mujoco.py 文件
+```python
+import mujoco
+import mujoco.viewer
+
+model = mujoco.MjModel.from_xml_string("""
+<mujoco>
+  <worldbody>
+    <body>
+      <geom type="box" size=".1 .1 .1" rgba="1 1 1 1"/>
+    </body>
+  </worldbody>
+</mujoco>
+""")
+
+data = mujoco.MjData(model)
+
+with mujoco.viewer.launch_passive(model, data) as viewer:
+    while viewer.is_running():
+        mujoco.mj_step(model, data)
+        viewer.sync()
+```
+
+5. 在PyCharm环境下运行 `python test_mujoco.py`，弹出软件窗口为安装成功
+
+
+![windows_init3](./images/windows_init_3.png)
+    
