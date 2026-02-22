@@ -188,7 +188,7 @@ export const TargetManager: React.FC<TargetManagerProps> = ({
                 </div>
             </div>
 
-            <div style={{marginTop: '8px'}}>
+            <div style={{marginTop: 'auto'}}>
                 <TargetCreator
                     selectedTargetType={selectedTargetType}
                     setSelectedTargetType={setSelectedTargetType}
