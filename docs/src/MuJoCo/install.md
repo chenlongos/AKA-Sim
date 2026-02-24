@@ -71,24 +71,21 @@ conda tos accept
 ```
 ![miniconda_bug](./images/conda_accept.png)
 
-3. 激活环境
+4. 激活环境
 
 ```shell
 # 激活进入专属环境
 conda activate mujoco_env
 ```
 
-4. 安装 MuJoCo
+5. 安装 MuJoCo
 
 ```shell
 # 安装 MuJoCo 引擎
 pip install mujoco
 ```
 
-
-
-
-5. 代码测试
+6. 代码测试
 
 创建 test_mujoco.py 文件
 ```python
@@ -115,7 +112,6 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
 6. 通过python运行
 
-
 ```shell
 python test_mujoco.py
 ```
@@ -129,12 +125,6 @@ python test_mujoco.py
 ```shell
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
-
-
-
-
-
-
 
 
 ## Macos 安装
@@ -229,18 +219,18 @@ sha256校验：mujoco-3.5.0-windows-x86_64.zip.sha256
 
 在Anaconda Powershell Prompt 或 Anaconda Prompt 中执行以下命令：
 
-    ```
-    conda create -n mujoco_env python=3.10 -y
-    conda activate mujoco_env
-    ```
+```shell
+conda create -n mujoco_env python=3.10 -y
+conda activate mujoco_env
+```
 
 3. **安装库**：
     
-    ```
-    pip install mujoco
-    pip install gymnasium
-    pip install imageio
-    ```
+```shell
+pip install mujoco
+pip install gymnasium
+pip install imageio
+```
     
 4. **在PyCharm环境下运行代码测试**
 
