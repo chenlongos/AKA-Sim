@@ -110,18 +110,19 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         viewer.sync()
 ```
 
-6. 通过python运行
+7. 通过python运行
 
 ```shell
 python test_mujoco.py
 ```
 
-7. 若弹出包含红色方块的 3D 软件窗口，则表示安装成功
+8. 若弹出包含红色方块的 3D 软件窗口，则表示安装成功
 
 ![linux_init](./images/linux_init.png)
 
 
-8. 建议第4步下载速度慢，可配置清华镜像源：
+**温馨提示**：建议第4步下载速度慢，可配置清华镜像源：
+
 ```shell
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
