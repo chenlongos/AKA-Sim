@@ -310,6 +310,9 @@ def _map_action(action_vector, action_dim: int):
     if action_dim == 4:
         idx = int(max(range(4), key=lambda i: action_vector[i]))
         return ["up", "down", "left", "right"][idx]
+    if action_dim == 3:
+        idx = int(max(range(3), key=lambda i: action_vector[i]))
+        return ["up", "down", "stop"][idx]
     if action_dim == 2:
         move = float(action_vector[0])
         turn = float(action_vector[1])
@@ -342,7 +345,7 @@ def _apply_action(action: str):
         car.y -= math.sin(car.angle) * car.speed * 2
         car.speed = 0
     state = car.get_state()
-    socketio.emit("car_state", state, broadcast=True)
+    socketio.emit("car_state", state)
 
 
 def _run_training(run_id: str, dataset_path: str, options: dict):

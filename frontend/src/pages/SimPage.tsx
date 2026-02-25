@@ -127,6 +127,19 @@ const SimPage = () => {
     const currentEpisodeRef = useRef<EpisodeStep[]>([])
     const stepTickRef = useRef(0)
 
+    const applyLocalReset = useCallback(() => {
+        localSpeedRef.current = 0
+        carState.current = {
+            x: INITIAL_LOCAL_W,
+            y: INITIAL_LOCAL_H,
+            angle: -Math.PI / 2,
+        }
+        actCommandRef.current = "stop"
+        lastCommandRef.current = "stop"
+        lastSentCommandRef.current = "stop"
+        keys.current = {}
+    }, [])
+
     const handleCreateTargetInFront = () => {
         const {x, y, angle} = carState.current;
         const frontX = x + Math.cos(angle) * 50;
@@ -674,6 +687,7 @@ const SimPage = () => {
                 setCollectStatus("采集: 已达目标")
                 setCollecting(false)
                 setCurrentStepCount(0)
+                applyLocalReset()
                 resetCar()
                 return
             }
@@ -698,6 +712,8 @@ const SimPage = () => {
                 setCollectStatus(`采集: 已记录 ${count}/${targetEpisodes}`)
             }
         }
+        setCurrentStepCount(0)
+        applyLocalReset()
         resetCar()
     }
 
@@ -769,7 +785,10 @@ const SimPage = () => {
                             <button onClick={() => sendCommand('ArrowLeft')}>指令: 左转</button>
                             <button onClick={() => sendCommand('ArrowRight')}>指令: 右转</button>
                             <button onClick={() => sendCommand('ArrowDown')}>指令: 后退</button>
-                            <button onClick={() => resetCar()}>复位</button>
+                            <button onClick={() => {
+                                applyLocalReset()
+                                resetCar()
+                            }}>复位</button>
                         </div>
                     </div>
                 </div>
