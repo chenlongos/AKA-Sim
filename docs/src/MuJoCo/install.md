@@ -52,24 +52,27 @@ source ~/.bashrc
 验证成功标志：终端命令行最左边出现 **(base)** 前缀！
 
 
-3. 创建项目空间与接受协议 
-
-首先我们为接下来的仿真，创建一个独立的 Python 3.10 环境：
-
-```shell
-# 创建一个名叫 mujoco_env 的环境，并指定 python 版本为 3.10
-conda create -n mujoco_env python=3.10 -y
-```
+3. 接受协议与创建Python环境
 
 **重要提示**：由于新版 Conda 的合规要求，第一次下载包前需要接受服务条款，否则会触发报错。
 
 ![miniconda_bug](./images/conda_bug.png)
+
 请执行以下命令接受 Anaconda 官方服务条款
 
 ```shell
 conda tos accept
 ```
 ![miniconda_bug](./images/conda_accept.png)
+
+创建一个独立的 Python 3.10 环境：
+
+```shell
+# 创建一个名叫 mujoco_env 的环境，并指定 python 版本为 3.10
+conda create -n mujoco_env python=3.10 -y
+```
+
+
 
 4. 激活环境
 
