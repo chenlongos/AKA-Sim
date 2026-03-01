@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from socketio import AsyncServer
 
 # 添加项目根目录到路径
@@ -19,7 +18,7 @@ sys.path.insert(0, str(project_root))
 import act_model
 from api import router as api_router
 from config import config
-from sio_handlers import SimNamespace
+from sio_handlers import SimNamespace, start_game_loop
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +39,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"模型加载失败: {e}")
         logger.warning("将以无模型模式运行")
 
+    # 启动状态广播
+    start_game_loop(sio)
+
     yield
 
     logger.info("=" * 50)
@@ -54,19 +56,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Socket.IO 服务器
 sio = AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*",
     ping_timeout=60,
     ping_interval=25,
 )

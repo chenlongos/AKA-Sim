@@ -17,7 +17,7 @@ car_state = {
     "speed": 0,
     "maxSpeed": 5,
     "acceleration": 0.2,
-    "friction": 0.95,
+    "friction": 0.98,
     "rotationSpeed": 0.05,
 }
 
@@ -57,6 +57,23 @@ def update_car_state(action: str):
         car_state["speed"] = 0
 
     # 更新位置
+    import math
+    car_state["x"] += math.cos(car_state["angle"]) * car_state["speed"]
+    car_state["y"] += math.sin(car_state["angle"]) * car_state["speed"]
+
+    # 边界检测
+    car_state["x"] = max(0, min(config.MAP_WIDTH, car_state["x"]))
+    car_state["y"] = max(0, min(config.MAP_HEIGHT, car_state["y"]))
+
+
+def apply_friction():
+    """应用摩擦力减速"""
+    if car_state["speed"] > 0:
+        car_state["speed"] = max(0, car_state["speed"] * car_state["friction"])
+    elif car_state["speed"] < 0:
+        car_state["speed"] = min(0, car_state["speed"] * car_state["friction"])
+
+    # 摩擦力时也要更新位置（小车滑行）
     import math
     car_state["x"] += math.cos(car_state["angle"]) * car_state["speed"]
     car_state["y"] += math.sin(car_state["angle"]) * car_state["speed"]
