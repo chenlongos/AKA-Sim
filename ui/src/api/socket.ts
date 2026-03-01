@@ -1,9 +1,10 @@
 import {io} from "socket.io-client";
 
-export const socket = io({
+// 连接到后端服务器
+export const socket = io("http://localhost:8000", {
     path: "/socket.io",
-    transports: ["polling"],
-    upgrade: false,
+    transports: ["polling", "websocket"],
+    upgrade: true,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 500,
@@ -27,7 +28,7 @@ export const actInfer = (payload: Record<string, unknown>) => {
 }
 
 export const saveDataset = async (payload: Record<string, unknown>) => {
-    const res = await fetch(`/api/dataset`, {
+    const res = await fetch(`http://localhost:8000/api/dataset`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
