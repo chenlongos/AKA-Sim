@@ -160,7 +160,8 @@ class SimpleDataset(torch.utils.data.Dataset):
     def __init__(self, data: Dict[str, torch.Tensor], action_chunk_size: int = 16):
         self.data = data
         self.action_chunk_size = action_chunk_size
-        self.num_samples = data["action"].shape[0] - action_chunk_size + 1
+        # 每条记录已经是一个完整样本
+        self.num_samples = data["action"].shape[0]
         self.image_mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
         self.image_std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
@@ -168,11 +169,11 @@ class SimpleDataset(torch.utils.data.Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        current_idx = idx + self.action_chunk_size - 1
-
-        images = self.data["observation.image"][current_idx]
-        state = self.data["observation.state"][current_idx]
-        action = self.data["action"][idx:idx + self.action_chunk_size]
+        # 每条记录已经是一个完整的 (image, state, action_chunk) 样本
+        # 不需要额外的切片
+        images = self.data["observation.image"][idx]
+        state = self.data["observation.state"][idx]
+        action = self.data["action"][idx]
 
         # 归一化图像
         images = (images.unsqueeze(0) - self.image_mean) / self.image_std
@@ -280,7 +281,9 @@ async def train_model(
 
                 optimizer.zero_grad()
 
-                predicted_actions = model.get_action(images, states, use_temporal_ensembling=False)
+                # 使用forward进行训练 (不使用eval模式)
+                output = model(images, states, action_target=actions, infer_cvae=False)
+                predicted_actions = output["action"]
                 loss = criterion(predicted_actions, actions)
 
                 loss.backward()
