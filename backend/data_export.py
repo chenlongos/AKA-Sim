@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 import numpy as np
+import torch
 
 
 def export_dataset(
@@ -111,11 +112,18 @@ def export_dataset(
     state_min = states_array.min(axis=0)
     state_max = states_array.max(axis=0)
 
+    # 转换为tensor避免除零问题
+    state_min_tensor = torch.from_numpy(state_min).float()
+    state_max_tensor = torch.from_numpy(state_max).float()
+    state_range = state_max_tensor - state_min_tensor
+    state_range = torch.where(state_range > 1e-6, state_range, torch.ones_like(state_range))
+
     # 创建数据parquet文件
     print("创建数据文件...")
 
-    # 状态归一化
-    normalized_states = (states_array - state_mean) / (state_std + 1e-8)
+    # 状态归一化 (使用min-max归一化)
+    states_tensor = torch.from_numpy(states_array).float()
+    normalized_states = (states_tensor - state_min_tensor) / state_range
 
     # 创建动作序列 (每个样本对应 action_chunk_size 个动作)
     # 对于离散动作，我们使用 one-hot 编码
@@ -136,11 +144,18 @@ def export_dataset(
         start_idx = chunk_idx * chunk_size
         end_idx = min((chunk_idx + 1) * chunk_size, num_samples)
 
+        # 将action转换为可序列化的格式 (每个样本的action展平为1D列表)
+        actions_list = []
+        for i in range(start_idx, end_idx):
+            # 将 (action_chunk_size, action_dim) 展平为 (action_chunk_size * action_dim,)
+            action_flat = actions_array[i].flatten().tolist()
+            actions_list.append(action_flat)
+
         chunk_data = {
             "observation.image": [f"videos/observation.images.fpv/chunk-{chunk_idx:03d}/frame_{i - start_idx:06d}.jpg"
                                 for i in range(start_idx, end_idx)],
             "observation.state": normalized_states[start_idx:end_idx].tolist(),
-            "action": actions_array[start_idx:end_idx].tolist(),
+            "action": actions_list,
         }
 
         df = pd.DataFrame(chunk_data)
@@ -171,10 +186,10 @@ def export_dataset(
 
     # stats.json
     stats = {
-        "state_mean": state_mean.tolist(),
-        "state_std": state_std.tolist(),
-        "state_min": state_min.tolist(),
-        "state_max": state_max.tolist(),
+        "state_mean": state_mean.tolist() if hasattr(state_mean, 'tolist') else state_mean,
+        "state_std": state_std.tolist() if hasattr(state_std, 'tolist') else state_std,
+        "state_min": state_min.tolist() if hasattr(state_min, 'tolist') else state_min,
+        "state_max": state_max.tolist() if hasattr(state_max, 'tolist') else state_max,
         "action_counts": action_counts,
     }
     with open(output_path / "meta" / "stats.json", "w") as f:

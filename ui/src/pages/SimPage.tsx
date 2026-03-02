@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection} from "../api/socket";
+import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection, startTraining, getTrainingStatus, stopTraining} from "../api/socket";
 
 const MAP_W = 800;
 const MAP_H = 600;
@@ -36,6 +36,8 @@ const SimPage = () => {
     })
     const [isCollecting, setIsCollecting] = useState(false)
     const [collectedCount, setCollectedCount] = useState(0)
+    const [isTraining, setIsTraining] = useState(false)
+    const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, total_epochs: 50, loss: 0, progress: 0 })
 
     // 监听后端车辆状态更新
     useEffect(() => {
@@ -64,10 +66,33 @@ const SimPage = () => {
             }
         })
 
+        // 监听训练进度
+        socket.on("training_progress", (data: { is_running: boolean; epoch: number; total_epochs: number; loss: number; progress: number }) => {
+            setIsTraining(data.is_running)
+            setTrainingProgress({
+                epoch: data.epoch,
+                total_epochs: data.total_epochs,
+                loss: data.loss,
+                progress: data.progress
+            })
+        })
+
+        // 获取初始训练状态
+        getTrainingStatus().then(data => {
+            setIsTraining(data.is_running)
+            setTrainingProgress({
+                epoch: data.epoch,
+                total_epochs: data.total_epochs,
+                loss: data.loss,
+                progress: data.progress
+            })
+        })
+
         return () => {
             socket.off("connected")
             socket.off("car_state_update")
             socket.off("collection_count")
+            socket.off("training_progress")
             socket.disconnect()
         }
     }, [])
@@ -81,6 +106,31 @@ const SimPage = () => {
         const newState = !isCollecting
         setIsCollecting(newState)
         setDataCollection(newState)
+    }
+
+    const handleStartTraining = async () => {
+        try {
+            const result = await startTraining({
+                data_dir: 'dataset',
+                output_dir: 'checkpoints',
+                epochs: 50,
+                batch_size: 8,
+                lr: 1e-4,
+            })
+            if (!result.success) {
+                alert(result.message)
+            }
+        } catch (e) {
+            alert('启动训练失败')
+        }
+    }
+
+    const handleStopTraining = async () => {
+        try {
+            await stopTraining()
+        } catch (e) {
+            alert('停止训练失败')
+        }
     }
 
     const drawGrid = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -346,6 +396,47 @@ const SimPage = () => {
             <h1 className="text-center font-bold">AKA-Sim 模拟器</h1>
             <div className="flex gap-5 flex-1 items-stretch">
                 <div className="w-64 flex flex-col h-full">
+                    <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-3 flex flex-col gap-2">
+                        <div className="font-semibold">训练控制</div>
+                        <div className="text-xs text-gray-600">
+                            已采集样本: {collectedCount}
+                        </div>
+                        {!isTraining ? (
+                            <button
+                                onClick={handleStartTraining}
+                                disabled={collectedCount === 0}
+                                className={`px-3 py-1 rounded ${collectedCount > 0 ? 'bg-purple-500 text-white hover:bg-purple-600' : 'bg-gray-300 text-gray-500'}`}
+                            >
+                                开始训练
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleStopTraining}
+                                className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                            >
+                                停止训练
+                            </button>
+                        )}
+                        {isTraining && (
+                            <div className="mt-2">
+                                <div className="text-xs text-gray-600">
+                                    Epoch: {trainingProgress.epoch}/{trainingProgress.total_epochs}
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                    Loss: {trainingProgress.loss.toFixed(6)}
+                                </div>
+                                <div className="mt-1 w-full bg-gray-200 rounded-full h-2">
+                                    <div
+                                        className="bg-purple-500 h-2 rounded-full transition-all"
+                                        style={{ width: `${trainingProgress.progress * 100}%` }}
+                                    />
+                                </div>
+                                <div className="text-xs text-gray-600 text-center mt-1">
+                                    {Math.round(trainingProgress.progress * 100)}%
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="flex-1 flex flex-col h-full">
                     <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-3 flex flex-col gap-3 h-full">

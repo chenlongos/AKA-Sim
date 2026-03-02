@@ -16,6 +16,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import act_model
+import api
 from api import router as api_router
 from config import config
 from sio_handlers import SimNamespace, start_game_loop
@@ -63,6 +64,9 @@ sio = AsyncServer(
     ping_interval=25,
 )
 sio.register_namespace(SimNamespace("/"))
+
+# 设置sio_server到api模块
+api.set_sio_server(sio)
 
 # 挂载 Socket.IO 到 FastAPI (使用 ASGI 应用)
 from socketio.asgi import ASGIApp
