@@ -173,8 +173,18 @@ async def start_training(
     epochs: int = 50,
     batch_size: int = 8,
     lr: float = 1e-4,
+    resume_from: str = None,  # 从已有模型继续训练
 ):
-    """启动训练"""
+    """启动训练
+
+    Args:
+        data_dir: 数据集目录
+        output_dir: 模型输出目录
+        epochs: 训练轮数
+        batch_size: 批次大小
+        lr: 学习率
+        resume_from: 从已有模型文件继续训练，None表示从头训练
+    """
     try:
         if training.training_state["is_running"]:
             return {
@@ -197,6 +207,11 @@ async def start_training(
         # 转换为绝对路径
         data_dir = str(data_dir)
 
+        # 处理 resume_from 路径
+        resume_path = None
+        if resume_from:
+            resume_path = str(project_root / resume_from)
+
         # 异步启动训练
         asyncio.create_task(
             training.train_model(
@@ -206,12 +221,14 @@ async def start_training(
                 epochs=epochs,
                 batch_size=batch_size,
                 lr=lr,
+                resume_from=resume_path,
             )
         )
 
+        resume_msg = f"，从模型继续: {resume_from}" if resume_from else ""
         return {
             "success": True,
-            "message": "训练已启动",
+            "message": f"训练已启动{resume_msg}",
         }
     except Exception as e:
         logger.error(f"启动训练失败: {e}")

@@ -1,5 +1,22 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection, startTraining, getTrainingStatus, stopTraining, loadTrainedModel, runInference} from "../api/socket";
+import {
+    socket,
+    sendActions,
+    resetCar,
+    getCarState,
+    setEpisode,
+    getEpisodes,
+    startTraining,
+    getTrainingStatus,
+    stopTraining,
+    loadTrainedModel,
+    runInference,
+    startEpisode,
+    endEpisode,
+    finalizeEpisode,
+    getEpisodeStatus,
+    pauseCollection
+} from "../api/socket";
 
 const MAP_W = 800;
 const MAP_H = 600;
@@ -34,16 +51,23 @@ const SimPage = () => {
         friction: 0.95,
         rotationSpeed: 0.05
     })
-    const [isCollecting, setIsCollecting] = useState(false)
     const [collectedCount, setCollectedCount] = useState(0)
     const [isTraining, setIsTraining] = useState(false)
-    const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, total_epochs: 50, loss: 0, progress: 0 })
+    const [trainingProgress, setTrainingProgress] = useState({epoch: 0, total_epochs: 50, loss: 0, progress: 0})
+    const [trainingEpochs, setTrainingEpochs] = useState(50)
+    const [currentEpisode, setCurrentEpisode] = useState(1)
+    const [episodeCounts, setEpisodeCounts] = useState<Record<number, number>>({})
+    const [resumeTraining, setResumeTraining] = useState(false)
     const [isModelLoaded, setIsModelLoaded] = useState(false)
     const [inferenceResult, setInferenceResult] = useState<string[]>([])
     const [isInferring, setIsInferring] = useState(false)
     const [autoInference, setAutoInference] = useState(false)
     const inferenceTimerRef = useRef<number | null>(null)
     const lastInferredActionRef = useRef<string[]>([])
+
+    // Episode 管理状态
+    const [isRecording, setIsRecording] = useState(false)
+    const [episodeTaskName, setEpisodeTaskName] = useState("default")
 
     // 监听后端车辆状态更新
     useEffect(() => {
@@ -63,7 +87,12 @@ const SimPage = () => {
         })
 
         // 监听采集计数更新
-        socket.on("collection_count", (data: { count: number; exported?: boolean; output_path?: string; error?: string }) => {
+        socket.on("collection_count", (data: {
+            count: number;
+            exported?: boolean;
+            output_path?: string;
+            error?: string
+        }) => {
             setCollectedCount(data.count)
             if (data.exported) {
                 alert(`数据已导出到: ${data.output_path}`)
@@ -73,7 +102,13 @@ const SimPage = () => {
         })
 
         // 监听训练进度
-        socket.on("training_progress", (data: { is_running: boolean; epoch: number; total_epochs: number; loss: number; progress: number }) => {
+        socket.on("training_progress", (data: {
+            is_running: boolean;
+            epoch: number;
+            total_epochs: number;
+            loss: number;
+            progress: number
+        }) => {
             setIsTraining(data.is_running)
             setTrainingProgress({
                 epoch: data.epoch,
@@ -94,11 +129,83 @@ const SimPage = () => {
             })
         })
 
+        // 监听轮次信息
+        socket.on("episode_info", (data: {
+            current_episode: number;
+            episodes: Record<number, number>;
+            buffer_size?: number
+        }) => {
+            setCurrentEpisode(data.current_episode)
+            setEpisodeCounts(data.episodes)
+        })
+
+        // 监听 episode 状态
+        socket.on("episode_status", (data: {
+            episode_id: number;
+            is_recording: boolean;
+            frame_count: number;
+            task_name: string
+        }) => {
+            setIsRecording(data.is_recording)
+            setCollectedCount(data.frame_count)
+            setEpisodeTaskName(data.task_name)
+        })
+
+        // 监听 episode 开始
+        socket.on("episode_started", (data: { episode_id: number; task_name: string; frame_count: number }) => {
+            setIsRecording(true)
+            setCollectedCount(0)
+            setEpisodeTaskName(data.task_name)
+        })
+
+        // 监听 episode 结束
+        socket.on("episode_ended", (data: {
+            episode_id: number;
+            frame_count: number;
+            exported?: boolean;
+            output_path?: string;
+            error?: string
+        }) => {
+            setIsRecording(false)
+            setCollectedCount(data.frame_count)
+            if (data.exported) {
+                alert(`Episode ${data.episode_id} 数据已导出到: ${data.output_path}`)
+            } else if (data.error) {
+                alert(`导出失败: ${data.error}`)
+            }
+        })
+
+        // 监听 episode 完成
+        socket.on("episode_finalized", (data: {
+            episode_id: number;
+            frame_count: number;
+            output_path?: string;
+            error?: string
+        }) => {
+            if (data.output_path) {
+                alert(`Episode ${data.episode_id} 已保存到: ${data.output_path}`)
+            } else if (data.error) {
+                alert(`保存失败: ${data.error}`)
+            }
+        })
+
+        // 获取初始轮次信息
+        getEpisodes()
+        // 获取初始 episode 状态
+        getEpisodeStatus()
+
         return () => {
             socket.off("connected")
             socket.off("car_state_update")
             socket.off("collection_count")
             socket.off("training_progress")
+            socket.off("episode_info")
+            socket.off("episode_status")
+            socket.off("episode_started")
+            socket.off("episode_ended")
+            socket.off("episode_finalized")
+            socket.off("collection_paused")
+            socket.off("collection_resumed")
             socket.disconnect()
         }
     }, [])
@@ -108,10 +215,35 @@ const SimPage = () => {
         sendActions([cmd])
     }
 
-    const toggleCollection = () => {
-        const newState = !isCollecting
-        setIsCollecting(newState)
-        setDataCollection(newState)
+    const handleSetEpisode = (episodeId: number) => {
+        if (episodeId < 1) return
+        if (isRecording) {
+            if (!confirm('正在录制中，切换轮次将结束当前录制。是否继续?')) {
+                return
+            }
+            handleEndEpisode()
+        }
+        setEpisode(episodeId)
+    }
+
+    const handleStartEpisode = () => {
+        startEpisode(currentEpisode, episodeTaskName)
+    }
+
+    const handleEndEpisode = () => {
+        endEpisode(currentEpisode)
+    }
+
+    const handleFinalizeEpisode = () => {
+        finalizeEpisode(currentEpisode)
+    }
+
+    const handleGetEpisodeStatus = () => {
+        getEpisodeStatus()
+    }
+
+    const handlePauseCollection = () => {
+        pauseCollection()
     }
 
     const handleStartTraining = async () => {
@@ -119,9 +251,10 @@ const SimPage = () => {
             const result = await startTraining({
                 data_dir: 'dataset',
                 output_dir: 'checkpoints',
-                epochs: 50,
+                epochs: trainingEpochs,
                 batch_size: 8,
                 lr: 1e-4,
+                resume_from: resumeTraining ? 'output/train/model.pt' : undefined,
             })
             if (!result.success) {
                 alert(result.message)
@@ -454,8 +587,6 @@ const SimPage = () => {
 
         let lastTime = 0;
         let lastSendTime = 0;
-        let lastCollectTime = 0;
-        const COLLECT_INTERVAL = 100 // 采集间隔(ms)，10fps
 
         const renderLoop = (currentTime: number) => {
             animationFrameId = window.requestAnimationFrame(renderLoop)
@@ -474,15 +605,6 @@ const SimPage = () => {
                 lastSendTime = currentTime
             }
 
-            // 如果正在采集，捕获并发送图像数据
-            if (isCollecting && currentTime - lastCollectTime >= COLLECT_INTERVAL) {
-                const actions = getCurrentActions()
-                // 从第一人称Canvas获取图像数据
-                const imageData = fpv.toDataURL('image/jpeg', 0.8)
-                sendImageData(imageData, actions)
-                lastCollectTime = currentTime
-            }
-
             // 渲染
             drawTopDown(ctxTop)
             drawFirstPerson(ctxFpv)
@@ -496,7 +618,7 @@ const SimPage = () => {
 
             window.cancelAnimationFrame(animationFrameId)
         }
-    }, [drawFirstPerson, drawTopDown, isCollecting])
+    }, [drawFirstPerson, drawTopDown, isRecording])
 
     return (
         <div className="flex flex-col gap-3 p-4 h-screen overflow-hidden">
@@ -505,8 +627,129 @@ const SimPage = () => {
                 <div className="w-64 flex flex-col h-full">
                     <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-3 flex flex-col gap-2">
                         <div className="font-semibold">训练控制</div>
-                        <div className="text-xs text-gray-600">
-                            已采集样本: {collectedCount}
+
+                        {/* Episode 管理 */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-gray-600">任务名称:</label>
+                            <input
+                                type="text"
+                                value={episodeTaskName}
+                                onChange={(e) => setEpisodeTaskName(e.target.value)}
+                                disabled={isRecording}
+                                className="w-20 px-2 py-1 text-sm border rounded"
+                            />
+                        </div>
+
+                        {/* Episode 状态 */}
+                        <div className="flex items-center gap-2">
+                            <span
+                                className={`text-xs px-2 py-0.5 rounded ${isRecording ? 'bg-red-500 text-black' : 'bg-gray-300'}`}>
+                                {isRecording ? '录制中' : '未录制'}
+                            </span>
+                        </div>
+
+                        {/* Episode 控制按钮 */}
+                        <div className="flex gap-2">
+                            {!isRecording ? (
+                                <button
+                                    onClick={handleStartEpisode}
+                                    className="px-2 py-1 text-xs bg-green-500 text-black rounded hover:bg-green-600"
+                                >
+                                    开始Episode
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleEndEpisode}
+                                    className="px-2 py-1 text-xs bg-red-500 text-black rounded hover:bg-red-600"
+                                >
+                                    结束Episode
+                                </button>
+                            )}
+                            <button
+                                onClick={handleFinalizeEpisode}
+                                disabled={!isRecording}
+                                className="px-2 py-1 text-xs bg-blue-500 text-black rounded hover:bg-blue-600 disabled:opacity-50"
+                            >
+                                保存
+                            </button>
+                            <button
+                                onClick={handleGetEpisodeStatus}
+                                className="px-2 py-1 text-xs bg-gray-300 rounded hover:bg-gray-400"
+                            >
+                                刷新
+                            </button>
+                        </div>
+
+                        {/* 采集控制 - 暂停/恢复 */}
+                        {isRecording && (
+                            <div className="flex gap-2 mt-2">
+                                <button
+                                    onClick={handlePauseCollection}
+                                    className="px-2 py-1 text-xs bg-orange-500 text-black rounded hover:bg-orange-600"
+                                >
+                                    暂停采集
+                                </button>
+                            </div>
+                        )}
+
+                        {/* 轮次选择 */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-gray-600">采集轮次:</label>
+                            <input
+                                type="number"
+                                value={currentEpisode}
+                                onChange={(e) => handleSetEpisode(parseInt(e.target.value) || 1)}
+                                min={1}
+                                disabled={isRecording}
+                                className="w-16 px-2 py-1 text-sm border rounded"
+                            />
+                            <button
+                                onClick={() => handleSetEpisode(currentEpisode + 1)}
+                                disabled={isRecording}
+                                className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
+                            >
+                                +1
+                            </button>
+                        </div>
+
+                        {/* 显示各轮次数据量 */}
+                        {Object.keys(episodeCounts).length > 0 && (
+                            <div className="text-xs text-gray-600">
+                                {Object.entries(episodeCounts).map(([ep, count]) => (
+                                    <div key={ep} className="flex justify-between">
+                                        <span>轮次 {ep}:</span>
+                                        <span>{count} 样本</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-gray-600">训练轮次:</label>
+                            <input
+                                type="number"
+                                value={trainingEpochs}
+                                onChange={(e) => setTrainingEpochs(parseInt(e.target.value) || 1)}
+                                min={1}
+                                max={1000}
+                                disabled={isTraining}
+                                className="w-20 px-2 py-1 text-sm border rounded"
+                            />
+                        </div>
+
+                        {/* 增量训练选项 */}
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                id="resumeTraining"
+                                checked={resumeTraining}
+                                onChange={(e) => setResumeTraining(e.target.checked)}
+                                disabled={isTraining}
+                                className="w-4 h-4"
+                            />
+                            <label htmlFor="resumeTraining" className="text-xs text-gray-600">
+                                从已有模型继续训练
+                            </label>
                         </div>
                         {!isTraining ? (
                             <button
@@ -535,7 +778,7 @@ const SimPage = () => {
                                 <div className="mt-1 w-full bg-gray-200 rounded-full h-2">
                                     <div
                                         className="bg-purple-500 h-2 rounded-full transition-all"
-                                        style={{ width: `${trainingProgress.progress * 100}%` }}
+                                        style={{width: `${trainingProgress.progress * 100}%`}}
                                     />
                                 </div>
                                 <div className="text-xs text-gray-600 text-center mt-1">
@@ -598,23 +841,28 @@ const SimPage = () => {
                             </div>
                         </div>
                         <div className="flex gap-2.5 flex-wrap justify-center items-center">
-                            <button onClick={() => sendCommand('forward')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 前进</button>
-                            <button onClick={() => sendCommand('left')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 左转</button>
-                            <button onClick={() => sendCommand('right')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 右转</button>
-                            <button onClick={() => sendCommand('backward')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 后退</button>
-                            <button onClick={() => resetCar()} className="px-3 py-1 bg-green-500 text-black rounded hover:bg-green-600">复位</button>
-                            <button
-                                onClick={toggleCollection}
-                                className={`px-3 py-1 rounded ${isCollecting ? 'bg-red-500 text-black hover:bg-red-600' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
-                            >
-                                {isCollecting ? '停止采集' : '开始采集'}
+                            <button onClick={() => sendCommand('forward')}
+                                    className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 前进
                             </button>
-                            <span className="text-xs text-gray-600 ml-2">已采集: {collectedCount}</span>
+                            <button onClick={() => sendCommand('left')}
+                                    className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 左转
+                            </button>
+                            <button onClick={() => sendCommand('right')}
+                                    className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 右转
+                            </button>
+                            <button onClick={() => sendCommand('backward')}
+                                    className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 后退
+                            </button>
+                            <button onClick={() => resetCar()}
+                                    className="px-3 py-1 bg-green-500 text-black rounded hover:bg-green-600">复位
+                            </button>
+                            <span className="text-xs text-gray-600 ml-2">帧数: {collectedCount}</span>
                         </div>
                     </div>
                 </div>
                 <div className="w-90 flex flex-col h-full">
-                    <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-2.5 flex flex-col gap-2 h-full text-gray-800 overflow-y-auto min-h-0">
+                    <div
+                        className="border-2 border-gray-800 rounded-lg bg-gray-100 p-2.5 flex flex-col gap-2 h-full text-gray-800 overflow-y-auto min-h-0">
                         <div className="font-semibold">车载摄像头</div>
                         <canvas ref={fpvRef} width={320} height={240}
                                 className="bg-black border-2 border-gray-800 rounded self-center"/>

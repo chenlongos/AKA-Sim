@@ -69,11 +69,21 @@ class TrainingCallbacks:
                 pass
 
 
-def load_dataset(data_dir: str = "dataset") -> Dict[str, torch.Tensor]:
-    """加载数据集"""
+def load_dataset(data_dir: str = "output/dataset") -> Dict[str, torch.Tensor]:
+    """
+    加载数据集
+
+    Args:
+        data_dir: 数据集目录
+    """
     # 使用项目根目录
     project_root = Path(__file__).parent.parent
     data_path = project_root / data_dir
+
+    # 如果 dataset 目录存在，也尝试从那里加载（兼容旧格式）
+    legacy_path = project_root / "dataset"
+    if not data_path.exists() and legacy_path.exists():
+        data_path = legacy_path
 
     # 加载统计信息
     with open(data_path / "meta" / "stats.json", "r") as f:
@@ -194,6 +204,7 @@ async def train_model(
     epochs: int = 50,
     batch_size: int = 8,
     lr: float = 1e-4,
+    resume_from: str = None,  # 从已有模型继续训练
 ) -> Optional[ACTModel]:
     """
     训练ACT模型
@@ -205,6 +216,7 @@ async def train_model(
         epochs: 训练轮数
         batch_size: 批次大小
         lr: 学习率
+        resume_from: 从已有模型文件继续训练，None表示从头训练
 
     Returns:
         训练好的模型
@@ -222,6 +234,8 @@ async def train_model(
     try:
         logger.info("=" * 50)
         logger.info("开始训练ACT模型")
+        if resume_from:
+            logger.info(f"从已有模型继续训练: {resume_from}")
         logger.info("=" * 50)
 
         # 加载数据
@@ -251,6 +265,16 @@ async def train_model(
 
         # 创建模型
         model = ACTModel(config)
+
+        # 如果指定了从已有模型继续训练
+        if resume_from:
+            resume_path = Path(resume_from)
+            if resume_path.exists():
+                model.load_state_dict(torch.load(resume_path, map_location='cpu'))
+                logger.info(f"已加载已有模型: {resume_path}")
+            else:
+                logger.warning(f"指定的可模型文件不存在: {resume_path}，从头开始训练")
+
         logger.info(f"模型参数量: {sum(p.numel() for p in model.parameters()):,}")
 
         # 数据集
