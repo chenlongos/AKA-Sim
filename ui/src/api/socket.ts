@@ -60,6 +60,19 @@ export const stopTraining = () => {
     return fetch('/api/train/stop', { method: 'POST' }).then(res => res.json());
 };
 
+// 推理相关
+export const loadTrainedModel = () => {
+    return fetch('/api/act/load_trained', { method: 'POST' }).then(res => res.json());
+};
+
+export const runInference = (state: number[]) => {
+    return fetch('/api/act/run_inference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state }),
+    }).then(res => res.json());
+};
+
 // 监听训练进度
 export const onTrainingProgress = (callback: (data: {
     is_running: boolean;

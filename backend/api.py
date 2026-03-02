@@ -4,8 +4,9 @@ AKA-Sim 后端 - REST API 端点
 
 import asyncio
 import logging
+from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 
 import act_model as act_model_module
 from config import config
@@ -105,6 +106,37 @@ async def infer_act(request: ACTInferenceRequest):
     """ACT 模型推理 API"""
     try:
         action = act_model_module.act_inference(request.state)
+        return {
+            "success": True,
+            "action": action,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/act/load_trained")
+async def load_trained_model(model_path: str = "checkpoints/final_model.pt"):
+    """加载训练好的ACT模型"""
+    try:
+        act_model_module.load_act_model(model_path)
+        return {
+            "success": True,
+            "message": "模型加载成功",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/act/run_inference")
+async def run_inference(body: dict = Body(...)):
+    """运行推理"""
+    try:
+        state = body.get("state", [400, 300, -1.57, 0, 5, 0.2, 0.05])
+        if not act_model_module.is_model_loaded():
+            # 尝试加载训练好的模型
+            act_model_module.load_act_model()
+
+        action = act_model_module.act_inference(state)
         return {
             "success": True,
             "action": action,

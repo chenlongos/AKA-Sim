@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection, startTraining, getTrainingStatus, stopTraining} from "../api/socket";
+import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection, startTraining, getTrainingStatus, stopTraining, loadTrainedModel, runInference} from "../api/socket";
 
 const MAP_W = 800;
 const MAP_H = 600;
@@ -38,6 +38,9 @@ const SimPage = () => {
     const [collectedCount, setCollectedCount] = useState(0)
     const [isTraining, setIsTraining] = useState(false)
     const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, total_epochs: 50, loss: 0, progress: 0 })
+    const [isModelLoaded, setIsModelLoaded] = useState(false)
+    const [inferenceResult, setInferenceResult] = useState<string[]>([])
+    const [isInferring, setIsInferring] = useState(false)
 
     // 监听后端车辆状态更新
     useEffect(() => {
@@ -131,6 +134,63 @@ const SimPage = () => {
         } catch (e) {
             alert('停止训练失败')
         }
+    }
+
+    const handleLoadModel = async () => {
+        try {
+            const result = await loadTrainedModel()
+            if (result.success) {
+                setIsModelLoaded(true)
+                alert('模型加载成功')
+            } else {
+                alert('模型加载失败: ' + result.message)
+            }
+        } catch (e) {
+            alert('加载模型失败')
+        }
+    }
+
+    const handleInference = async () => {
+        if (!isModelLoaded) {
+            alert('请先加载模型')
+            return
+        }
+        setIsInferring(true)
+        try {
+            // 使用当前车辆状态作为输入
+            const state = [
+                carState.x,
+                carState.y,
+                carState.angle,
+                carState.speed,
+                carState.maxSpeed,
+                carState.acceleration,
+                carState.rotationSpeed
+            ]
+            const result = await runInference(state)
+            if (result.success) {
+                // 解析动作
+                const actions: string[] = []
+                // result.action 是 [action_chunk_size, action_dim] 的二维数组
+                // 取第一个动作，解码为文字
+                const firstAction = result.action[0]
+                // 找到最大值对应的动作
+                const maxIdx = firstAction.indexOf(Math.max(...firstAction))
+                const actionNames = ['forward', 'backward', 'left', 'right', 'stop']
+                actions.push(actionNames[maxIdx] || 'stop')
+                setInferenceResult(actions)
+
+                // 执行动作
+                if (actions.length > 0) {
+                    sendActions(actions)
+                }
+            } else {
+                alert('推理失败')
+            }
+        } catch (e) {
+            alert('推理失败')
+        }
+        setIsInferring(false)
     }
 
     const drawGrid = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -434,6 +494,34 @@ const SimPage = () => {
                                 <div className="text-xs text-gray-600 text-center mt-1">
                                     {Math.round(trainingProgress.progress * 100)}%
                                 </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-3 flex flex-col gap-2 mt-4">
+                        <div className="font-semibold">推理控制</div>
+                        <div className="text-xs text-gray-600">
+                            模型状态: {isModelLoaded ? '已加载' : '未加载'}
+                        </div>
+                        {!isModelLoaded ? (
+                            <button
+                                onClick={handleLoadModel}
+                                className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+                            >
+                                加载模型
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleInference}
+                                disabled={isInferring}
+                                className={`px-3 py-1 rounded ${isInferring ? 'bg-gray-300' : 'bg-green-500 text-white hover:bg-green-600'}`}
+                            >
+                                {isInferring ? '推理中...' : '运行推理'}
+                            </button>
+                        )}
+                        {inferenceResult.length > 0 && (
+                            <div className="text-xs text-gray-600 mt-2">
+                                推理动作: {inferenceResult.join(', ')}
                             </div>
                         )}
                     </div>
