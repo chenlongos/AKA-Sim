@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 from config import config
 
 if TYPE_CHECKING:
-    from policies.models.act.act_model_pytorch import ACTModel
+    from policies.models.act.modeling_act import ACTModel
 
 # 车辆状态
 car_state = {

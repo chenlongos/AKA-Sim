@@ -166,15 +166,29 @@ const SimPage = () => {
         ]
         const result = await runInference(state)
         if (result.success) {
-            // 解析动作
+            // 解析动作 - 支持多动作组合
             const actions: string[] = []
             // result.action 是 [action_chunk_size, action_dim] 的二维数组
             // 取第一个动作，解码为文字
             const firstAction = result.action[0]
-            // 找到最大值对应的动作
-            const maxIdx = firstAction.indexOf(Math.max(...firstAction))
+            console.log('模型输出:', firstAction)
+
+            // 使用阈值来判断激活哪些动作 (多动作组合)
+            const threshold = 0.5
             const actionNames = ['forward', 'backward', 'left', 'right', 'stop']
-            actions.push(actionNames[maxIdx] || 'stop')
+
+            for (let i = 0; i < firstAction.length; i++) {
+                if (firstAction[i] > threshold) {
+                    actions.push(actionNames[i])
+                }
+            }
+
+            // 如果没有动作超过阈值，选择概率最大的
+            if (actions.length === 0) {
+                const maxIdx = firstAction.indexOf(Math.max(...firstAction))
+                actions.push(actionNames[maxIdx] || 'stop')
+            }
+
             setInferenceResult(actions)
             lastInferredActionRef.current = actions
 

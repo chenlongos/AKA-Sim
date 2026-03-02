@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 import pandas as pd
 
-from policies.models.act.act_model_pytorch import ACTModel, ACTConfig
+from policies.models.act.modeling_act import ACTModel, ACTConfig
 
 logger = logging.getLogger(__name__)
 

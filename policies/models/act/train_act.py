@@ -23,7 +23,7 @@ import base64
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from policies.models.act.act_model_pytorch import ACTModel, ACTConfig
+from policies.models.act.modeling_act import ACTModel, ACTConfig
 from policies.models.act.ACTDataset import ACTDataset
 
 

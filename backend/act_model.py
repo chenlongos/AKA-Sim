@@ -12,7 +12,7 @@ import torch
 from config import config
 
 if TYPE_CHECKING:
-    from policies.models.act.act_model_pytorch import ACTModel, ACTConfig
+    from policies.models.act.modeling_act import ACTModel, ACTConfig
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def create_act_config(
     hidden_dim: int = 256,
 ) -> "ACTConfig":
     """创建 ACT 模型配置"""
-    from policies.models.act.act_model_pytorch import ACTConfig as PyACTConfig
+    from policies.models.act.modeling_act import ACTConfig as PyACTConfig
 
     return PyACTConfig(
         state_dim=state_dim,
@@ -49,7 +49,7 @@ def load_act_model(model_path: str = None) -> "ACTModel":
     """加载 ACT 模型"""
     global _act_model
 
-    from policies.models.act.act_model_pytorch import ACTModel as PyACTModel
+    from policies.models.act.modeling_act import ACTModel as PyACTModel
 
     logger.info("加载 ACT 模型...")
 

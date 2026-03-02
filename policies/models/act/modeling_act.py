@@ -9,13 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 import math
-
-try:
-    from .ACTConfig import ACTConfig
-    from .ACTDataset import ACTDataset
-except ImportError:
-    from ACTConfig import ACTConfig
-    from ACTDataset import ACTDataset
+from .configuration_act import ACTConfig
+from .ACTDataset import ACTDataset
 
 
 class SpatialSoftmax(nn.Module):

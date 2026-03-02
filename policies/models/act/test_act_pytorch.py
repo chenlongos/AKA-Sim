@@ -9,14 +9,14 @@ import os
 # 添加当前目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from act_model_pytorch import (
+from modeling_act import (
     ACTModel,
     ACTLoss,
     ACTTrainer,
     create_act_model,
 )
 from ACTDataset import ACTDataset
-from ACTConfig import ACTConfig
+from configuration_act import ACTConfig
 
 
 def test_act_config():
