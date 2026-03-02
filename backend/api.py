@@ -146,7 +146,7 @@ async def run_inference(body: dict = Body(...)):
 
 
 @router.post("/api/dataset/export")
-async def export_dataset_api(output_dir: str = "dataset"):
+async def export_dataset_api(output_dir: str = None):
     """导出数据集为ACT训练格式"""
     try:
         if not state.dataset_samples:
@@ -168,8 +168,8 @@ async def export_dataset_api(output_dir: str = "dataset"):
 
 @router.post("/api/train")
 async def start_training(
-    data_dir: str = "dataset",
-    output_dir: str = "checkpoints",
+    data_dir: str = "output/dataset",
+    output_dir: str = None,
     epochs: int = 50,
     batch_size: int = 8,
     lr: float = 1e-4,

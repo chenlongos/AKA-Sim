@@ -189,8 +189,8 @@ class SimpleDataset(torch.utils.data.Dataset):
 
 async def train_model(
     sio_server,
-    data_dir: str = "dataset",
-    output_dir: str = "checkpoints",
+    data_dir: str = "output/dataset",
+    output_dir: str = None,
     epochs: int = 50,
     batch_size: int = 8,
     lr: float = 1e-4,
@@ -262,7 +262,12 @@ async def train_model(
         criterion = nn.MSELoss()
 
         # 设备
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.mps.is_available():
+            device = "mps"
+        device = torch.device(device)
         model = model.to(device)
         logger.info(f"使用设备: {device}")
 
@@ -296,10 +301,14 @@ async def train_model(
             callbacks.on_epoch_end(epoch, avg_loss)
             logger.info(f"Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.6f}")
 
-        # 保存模型
-        output_path = Path(output_dir)
+        # 保存模型到output目录
+        if output_dir is None:
+            project_root = Path(__file__).parent.parent
+            output_path = project_root / "output" / "train"
+        else:
+            output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        final_path = output_path / "final_model.pt"
+        final_path = output_path / "model.pt"
         torch.save(model.state_dict(), final_path)
         logger.info(f"模型已保存到: {final_path}")
 

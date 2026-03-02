@@ -37,7 +37,9 @@ class SimNamespace(AsyncNamespace):
     async def on_action(self, sid: str, actions: list):
         """处理动作命令 - 接收前端发送的当前按键列表"""
         global current_actions
+        logger.info(f"收到动作: {actions}, 类型: {type(actions)}")
         current_actions = set(actions)
+        logger.info(f"当前动作集合: {current_actions}")
 
         # 如果没有按键，立刻减速到0
         if not actions:
@@ -142,8 +144,10 @@ async def game_loop_task(sio_server):
         try:
             # 根据当前按键更新状态
             if current_actions:
+                logger.info(f"游戏循环处理动作: {current_actions}")
                 for action in current_actions:
                     state.update_car_state(action)
+                logger.info(f"更新后状态: x={state.car_state['x']}, y={state.car_state['y']}, speed={state.car_state['speed']}")
             else:
                 # 没有按键时应用摩擦力减速
                 state.apply_friction()

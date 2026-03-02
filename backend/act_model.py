@@ -53,10 +53,10 @@ def load_act_model(model_path: str = None) -> "ACTModel":
 
     logger.info("加载 ACT 模型...")
 
-    # 尝试从checkpoints目录加载训练好的模型
+    # 尝试从output目录加载训练好的模型
     if model_path is None:
         project_root = Path(__file__).parent.parent
-        model_path = project_root / "checkpoints" / "final_model.pt"
+        model_path = project_root / "output" / "train" / "model.pt"
 
     model_path = Path(model_path)
 

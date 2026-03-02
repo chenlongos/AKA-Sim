@@ -41,6 +41,9 @@ const SimPage = () => {
     const [isModelLoaded, setIsModelLoaded] = useState(false)
     const [inferenceResult, setInferenceResult] = useState<string[]>([])
     const [isInferring, setIsInferring] = useState(false)
+    const [autoInference, setAutoInference] = useState(false)
+    const inferenceTimerRef = useRef<number | null>(null)
+    const lastInferredActionRef = useRef<string[]>([])
 
     // 监听后端车辆状态更新
     useEffect(() => {
@@ -150,6 +153,39 @@ const SimPage = () => {
         }
     }
 
+    const doInference = async () => {
+        // 使用当前车辆状态作为输入
+        const state = [
+            carState.x,
+            carState.y,
+            carState.angle,
+            carState.speed,
+            carState.maxSpeed,
+            carState.acceleration,
+            carState.rotationSpeed
+        ]
+        const result = await runInference(state)
+        if (result.success) {
+            // 解析动作
+            const actions: string[] = []
+            // result.action 是 [action_chunk_size, action_dim] 的二维数组
+            // 取第一个动作，解码为文字
+            const firstAction = result.action[0]
+            // 找到最大值对应的动作
+            const maxIdx = firstAction.indexOf(Math.max(...firstAction))
+            const actionNames = ['forward', 'backward', 'left', 'right', 'stop']
+            actions.push(actionNames[maxIdx] || 'stop')
+            setInferenceResult(actions)
+            lastInferredActionRef.current = actions
+
+            // 执行动作
+            if (actions.length > 0) {
+                console.log(actions)
+                sendActions(actions)
+            }
+        }
+    }
+
     const handleInference = async () => {
         if (!isModelLoaded) {
             alert('请先加载模型')
@@ -157,40 +193,36 @@ const SimPage = () => {
         }
         setIsInferring(true)
         try {
-            // 使用当前车辆状态作为输入
-            const state = [
-                carState.x,
-                carState.y,
-                carState.angle,
-                carState.speed,
-                carState.maxSpeed,
-                carState.acceleration,
-                carState.rotationSpeed
-            ]
-            const result = await runInference(state)
-            if (result.success) {
-                // 解析动作
-                const actions: string[] = []
-                // result.action 是 [action_chunk_size, action_dim] 的二维数组
-                // 取第一个动作，解码为文字
-                const firstAction = result.action[0]
-                // 找到最大值对应的动作
-                const maxIdx = firstAction.indexOf(Math.max(...firstAction))
-                const actionNames = ['forward', 'backward', 'left', 'right', 'stop']
-                actions.push(actionNames[maxIdx] || 'stop')
-                setInferenceResult(actions)
-
-                // 执行动作
-                if (actions.length > 0) {
-                    sendActions(actions)
-                }
-            } else {
-                alert('推理失败')
-            }
+            await doInference()
         } catch (e) {
             alert('推理失败')
         }
         setIsInferring(false)
+    }
+
+    const handleAutoInference = async () => {
+        if (!isModelLoaded) {
+            alert('请先加载模型')
+            return
+        }
+
+        if (autoInference) {
+            // 停止自动推理
+            setAutoInference(false)
+            if (inferenceTimerRef.current) {
+                clearInterval(inferenceTimerRef.current)
+                inferenceTimerRef.current = null
+            }
+        } else {
+            // 开始自动推理
+            setAutoInference(true)
+            // 先执行一次
+            await doInference()
+            // 然后每50ms执行一次 (与sendActions频率一致)
+            inferenceTimerRef.current = window.setInterval(async () => {
+                await doInference()
+            }, 50)
+        }
     }
 
     const drawGrid = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -422,7 +454,8 @@ const SimPage = () => {
 
             // 控制发送频率
             if (currentTime - lastSendTime >= SEND_INTERVAL) {
-                const actions = getCurrentActions()
+                // 如果在自动推理模式，使用推断的动作；否则使用键盘输入
+                const actions = autoInference ? lastInferredActionRef.current : getCurrentActions()
                 sendActions(actions)
                 lastSendTime = currentTime
             }
@@ -465,14 +498,14 @@ const SimPage = () => {
                             <button
                                 onClick={handleStartTraining}
                                 disabled={collectedCount === 0}
-                                className={`px-3 py-1 rounded ${collectedCount > 0 ? 'bg-purple-500 text-white hover:bg-purple-600' : 'bg-gray-300 text-gray-500'}`}
+                                className={`px-3 py-1 rounded ${collectedCount > 0 ? 'bg-purple-500 text-black hover:bg-purple-600' : 'bg-gray-300 text-gray-500'}`}
                             >
                                 开始训练
                             </button>
                         ) : (
                             <button
                                 onClick={handleStopTraining}
-                                className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                                className="px-3 py-1 bg-red-500 text-black rounded hover:bg-red-600"
                             >
                                 停止训练
                             </button>
@@ -506,18 +539,27 @@ const SimPage = () => {
                         {!isModelLoaded ? (
                             <button
                                 onClick={handleLoadModel}
-                                className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+                                className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600"
                             >
                                 加载模型
                             </button>
                         ) : (
-                            <button
-                                onClick={handleInference}
-                                disabled={isInferring}
-                                className={`px-3 py-1 rounded ${isInferring ? 'bg-gray-300' : 'bg-green-500 text-white hover:bg-green-600'}`}
-                            >
-                                {isInferring ? '推理中...' : '运行推理'}
-                            </button>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleInference}
+                                    disabled={isInferring || autoInference}
+                                    className={`px-3 py-1 rounded ${isInferring || autoInference ? 'bg-gray-300' : 'bg-green-500 text-black hover:bg-green-600'}`}
+                                >
+                                    {isInferring ? '推理中...' : '单次推理'}
+                                </button>
+                                <button
+                                    onClick={handleAutoInference}
+                                    disabled={isInferring}
+                                    className={`px-3 py-1 rounded ${autoInference ? 'bg-red-500 text-black' : 'bg-orange-500 text-black hover:bg-orange-600'}`}
+                                >
+                                    {autoInference ? '停止自动' : '自动推理'}
+                                </button>
+                            </div>
                         )}
                         {inferenceResult.length > 0 && (
                             <div className="text-xs text-gray-600 mt-2">

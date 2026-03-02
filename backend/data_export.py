@@ -33,7 +33,7 @@ def export_dataset(
     """
     # 默认保存到项目根目录
     if output_dir is None:
-        output_dir = Path(__file__).parent.parent / "dataset"
+        output_dir = Path(__file__).parent.parent / "output" / "dataset"
     else:
         output_dir = Path(output_dir)
 
