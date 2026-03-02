@@ -37,9 +37,7 @@ class SimNamespace(AsyncNamespace):
     async def on_action(self, sid: str, actions: list):
         """处理动作命令 - 接收前端发送的当前按键列表"""
         global current_actions
-        logger.info(f"收到动作: {actions}, 类型: {type(actions)}")
         current_actions = set(actions)
-        logger.info(f"当前动作集合: {current_actions}")
 
         # 如果没有按键，立刻减速到0
         if not actions:

@@ -591,7 +591,7 @@ const SimPage = () => {
                             <button onClick={() => resetCar()} className="px-3 py-1 bg-green-500 text-black rounded hover:bg-green-600">复位</button>
                             <button
                                 onClick={toggleCollection}
-                                className={`px-3 py-1 rounded ${isCollecting ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
+                                className={`px-3 py-1 rounded ${isCollecting ? 'bg-red-500 text-black hover:bg-red-600' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
                             >
                                 {isCollecting ? '停止采集' : '开始采集'}
                             </button>
