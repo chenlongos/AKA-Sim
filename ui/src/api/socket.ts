@@ -23,3 +23,16 @@ export const resetCar = () => {
 export const getCarState = () => {
     socket.emit('get_car_state');
 }
+
+// 发送图像数据用于训练数据采集
+export const sendImageData = (imageData: string, actions: string[]) => {
+    socket.emit('collect_data', {
+        image: imageData,
+        actions: actions
+    });
+}
+
+// 开始/停止数据采集
+export const setDataCollection = (enabled: boolean) => {
+    socket.emit('set_collection', enabled);
+}

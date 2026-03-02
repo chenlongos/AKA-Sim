@@ -10,6 +10,7 @@ import act_model as act_model_module
 from config import config
 from models import ACTInferenceRequest, DatasetPayload
 import state
+from data_export import export_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -98,4 +99,25 @@ async def infer_act(request: ACTInferenceRequest):
             "action": action,
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/dataset/export")
+async def export_dataset_api(output_dir: str = "dataset"):
+    """导出数据集为ACT训练格式"""
+    try:
+        if not state.dataset_samples:
+            return {
+                "success": False,
+                "message": "没有采集数据可导出",
+            }
+
+        output_path = export_dataset(state.dataset_samples, output_dir)
+        return {
+            "success": True,
+            "output_path": output_path,
+            "samples_count": len(state.dataset_samples),
+        }
+    except Exception as e:
+        logger.error(f"导出数据集失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

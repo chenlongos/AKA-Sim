@@ -3,6 +3,8 @@ AKA-Sim 后端 - Socket.IO 事件处理
 """
 
 import asyncio
+import base64
+import io
 import logging
 
 from socketio import AsyncNamespace
@@ -13,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 # 当前按下的按键集合
 current_actions = set()
+
+# 数据采集状态
+is_collecting = False
 
 
 class SimNamespace(AsyncNamespace):
@@ -68,6 +73,64 @@ class SimNamespace(AsyncNamespace):
                 "success": False,
                 "error": str(e),
             })
+
+    async def on_set_collection(self, sid: str, enabled: bool):
+        """设置数据采集状态"""
+        global is_collecting
+        is_collecting = enabled
+        logger.info(f"数据采集{'开启' if enabled else '关闭'}")
+
+        if not enabled and state.dataset_samples:
+            # 停止采集时自动导出
+            logger.info("停止采集，自动导出数据...")
+            try:
+                from data_export import export_dataset
+                output_path = export_dataset(state.dataset_samples)
+                logger.info(f"数据已导出到: {output_path}")
+                await self.emit("collection_count", {
+                    "count": len(state.dataset_samples),
+                    "exported": True,
+                    "output_path": output_path
+                })
+            except Exception as e:
+                logger.error(f"自动导出失败: {e}")
+                await self.emit("collection_count", {
+                    "count": len(state.dataset_samples),
+                    "exported": False,
+                    "error": str(e)
+                })
+        else:
+            await self.emit("collection_count", {"count": len(state.dataset_samples)})
+
+    async def on_collect_data(self, sid: str, payload: dict):
+        """接收前端发送的图像数据进行保存"""
+        global is_collecting
+
+        if not is_collecting:
+            return
+
+        try:
+            # 解析图像数据 (base64)
+            image_data = payload.get("image", "")
+            actions = payload.get("actions", [])
+
+            # 获取当前车辆状态
+            car_state = state.car_state.copy()
+
+            # 保存样本
+            sample = {
+                "image": image_data,  # base64编码的JPEG图像
+                "state": car_state,
+                "actions": actions,
+            }
+            state.dataset_samples.append(sample)
+
+            # 定期广播计数 (每10个样本)
+            if len(state.dataset_samples) % 10 == 0:
+                await self.emit("collection_count", {"count": len(state.dataset_samples)})
+
+        except Exception as e:
+            logger.error(f"数据采集失败: {e}")
 
 
 # 游戏循环任务

@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import {socket, sendActions, resetCar, getCarState} from "../api/socket";
+import {socket, sendActions, resetCar, getCarState, sendImageData, setDataCollection} from "../api/socket";
 
 const MAP_W = 800;
 const MAP_H = 600;
@@ -34,6 +34,8 @@ const SimPage = () => {
         friction: 0.95,
         rotationSpeed: 0.05
     })
+    const [isCollecting, setIsCollecting] = useState(false)
+    const [collectedCount, setCollectedCount] = useState(0)
 
     // 监听后端车辆状态更新
     useEffect(() => {
@@ -52,9 +54,20 @@ const SimPage = () => {
             setCarState(state)
         })
 
+        // 监听采集计数更新
+        socket.on("collection_count", (data: { count: number; exported?: boolean; output_path?: string; error?: string }) => {
+            setCollectedCount(data.count)
+            if (data.exported) {
+                alert(`数据已导出到: ${data.output_path}`)
+            } else if (data.error) {
+                alert(`导出失败: ${data.error}`)
+            }
+        })
+
         return () => {
             socket.off("connected")
             socket.off("car_state_update")
+            socket.off("collection_count")
             socket.disconnect()
         }
     }, [])
@@ -62,6 +75,12 @@ const SimPage = () => {
     const sendCommand = (cmd: string) => {
         // 发送动作到后端
         sendActions([cmd])
+    }
+
+    const toggleCollection = () => {
+        const newState = !isCollecting
+        setIsCollecting(newState)
+        setDataCollection(newState)
     }
 
     const drawGrid = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number) => {
@@ -279,6 +298,8 @@ const SimPage = () => {
 
         let lastTime = 0;
         let lastSendTime = 0;
+        let lastCollectTime = 0;
+        const COLLECT_INTERVAL = 100 // 采集间隔(ms)，10fps
 
         const renderLoop = (currentTime: number) => {
             animationFrameId = window.requestAnimationFrame(renderLoop)
@@ -296,6 +317,15 @@ const SimPage = () => {
                 lastSendTime = currentTime
             }
 
+            // 如果正在采集，捕获并发送图像数据
+            if (isCollecting && currentTime - lastCollectTime >= COLLECT_INTERVAL) {
+                const actions = getCurrentActions()
+                // 从第一人称Canvas获取图像数据
+                const imageData = fpv.toDataURL('image/jpeg', 0.8)
+                sendImageData(imageData, actions)
+                lastCollectTime = currentTime
+            }
+
             // 渲染
             drawTopDown(ctxTop)
             drawFirstPerson(ctxFpv)
@@ -309,7 +339,7 @@ const SimPage = () => {
 
             window.cancelAnimationFrame(animationFrameId)
         }
-    }, [drawFirstPerson, drawTopDown])
+    }, [drawFirstPerson, drawTopDown, isCollecting])
 
     return (
         <div className="flex flex-col gap-3 p-4 h-screen overflow-hidden">
@@ -338,6 +368,13 @@ const SimPage = () => {
                             <button onClick={() => sendCommand('right')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 右转</button>
                             <button onClick={() => sendCommand('backward')} className="px-3 py-1 bg-blue-500 text-black rounded hover:bg-blue-600">指令: 后退</button>
                             <button onClick={() => resetCar()} className="px-3 py-1 bg-green-500 text-black rounded hover:bg-green-600">复位</button>
+                            <button
+                                onClick={toggleCollection}
+                                className={`px-3 py-1 rounded ${isCollecting ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
+                            >
+                                {isCollecting ? '停止采集' : '开始采集'}
+                            </button>
+                            <span className="text-xs text-gray-600 ml-2">已采集: {collectedCount}</span>
                         </div>
                     </div>
                 </div>
