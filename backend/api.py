@@ -1,0 +1,234 @@
+"""
+AKA-Sim 后端 - REST API 端点
+"""
+
+import asyncio
+import logging
+from typing import List
+
+from fastapi import APIRouter, HTTPException, Body
+
+import act_model as act_model_module
+from config import config
+from models import ACTInferenceRequest, DatasetPayload
+import state
+from data_export import export_dataset
+import training
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# 存储sio_server实例
+_sio_server = None
+
+
+def set_sio_server(sio):
+    """设置Socket.IO服务器实例"""
+    global _sio_server
+    _sio_server = sio
+
+
+@router.get("/")
+async def root():
+    """根路径"""
+    return {
+        "name": "AKA-Sim Backend",
+        "version": "1.0.0",
+        "status": "running",
+    }
+
+
+@router.get("/health")
+async def health():
+    """健康检查"""
+    return {
+        "status": "healthy",
+        "model_loaded": act_model_module.is_model_loaded(),
+    }
+
+
+@router.post("/api/dataset")
+async def save_dataset(payload: DatasetPayload):
+    """保存数据集样本"""
+    try:
+        state.dataset_samples.append({
+            "observation": payload.observation,
+            "action": payload.action,
+        })
+
+        logger.info(f"保存数据集样本，当前共 {len(state.dataset_samples)} 个样本")
+
+        return {
+            "success": True,
+            "samples_count": len(state.dataset_samples),
+        }
+    except Exception as e:
+        logger.error(f"保存数据集失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/dataset")
+async def get_dataset():
+    """获取数据集"""
+    return {
+        "samples": state.dataset_samples,
+        "count": len(state.dataset_samples),
+    }
+
+
+@router.delete("/api/dataset")
+async def clear_dataset():
+    """清空数据集"""
+    state.dataset_samples = []
+    return {
+        "success": True,
+        "message": "数据集已清空",
+    }
+
+
+@router.post("/api/act/load")
+async def load_model(path: str):
+    """加载 ACT 模型"""
+    try:
+        config.MODEL_PATH = path
+        act_model_module.load_act_model()
+        return {
+            "success": True,
+            "device": act_model_module.get_model_device(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/act/infer")
+async def infer_act(request: ACTInferenceRequest):
+    """ACT 模型推理 API"""
+    try:
+        action = act_model_module.act_inference(request.state)
+        return {
+            "success": True,
+            "action": action,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/act/load_trained")
+async def load_trained_model(model_path: str = "checkpoints/final_model.pt"):
+    """加载训练好的ACT模型"""
+    try:
+        act_model_module.load_act_model(model_path)
+        return {
+            "success": True,
+            "message": "模型加载成功",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/act/run_inference")
+async def run_inference(body: dict = Body(...)):
+    """运行推理"""
+    try:
+        state = body.get("state", [400, 300, -1.57, 0, 5, 0.2, 0.05])
+        if not act_model_module.is_model_loaded():
+            # 尝试加载训练好的模型
+            act_model_module.load_act_model()
+
+        action = act_model_module.act_inference(state)
+        return {
+            "success": True,
+            "action": action,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/dataset/export")
+async def export_dataset_api(output_dir: str = None):
+    """导出数据集为ACT训练格式"""
+    try:
+        if not state.dataset_samples:
+            return {
+                "success": False,
+                "message": "没有采集数据可导出",
+            }
+
+        output_path = export_dataset(state.dataset_samples, output_dir)
+        return {
+            "success": True,
+            "output_path": output_path,
+            "samples_count": len(state.dataset_samples),
+        }
+    except Exception as e:
+        logger.error(f"导出数据集失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/train")
+async def start_training(
+    data_dir: str = "output/dataset",
+    output_dir: str = None,
+    epochs: int = 50,
+    batch_size: int = 8,
+    lr: float = 1e-4,
+):
+    """启动训练"""
+    try:
+        if training.training_state["is_running"]:
+            return {
+                "success": False,
+                "message": "训练正在进行中",
+            }
+
+        # 检查数据集是否存在 - 使用项目根目录
+        import os
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent
+        data_path = project_root / data_dir
+
+        if not data_path.exists():
+            return {
+                "success": False,
+                "message": f"数据集目录不存在: {data_path}",
+            }
+
+        # 转换为绝对路径
+        data_dir = str(data_dir)
+
+        # 异步启动训练
+        asyncio.create_task(
+            training.train_model(
+                _sio_server,
+                data_dir=data_dir,
+                output_dir=output_dir,
+                epochs=epochs,
+                batch_size=batch_size,
+                lr=lr,
+            )
+        )
+
+        return {
+            "success": True,
+            "message": "训练已启动",
+        }
+    except Exception as e:
+        logger.error(f"启动训练失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/train/status")
+async def get_training_status():
+    """获取训练状态"""
+    return training.get_training_state()
+
+
+@router.post("/api/train/stop")
+async def stop_training():
+    """停止训练"""
+    training.training_state["is_running"] = False
+    return {
+        "success": True,
+        "message": "训练已停止",
+    }
