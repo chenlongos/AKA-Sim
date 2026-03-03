@@ -201,6 +201,25 @@ class SimNamespace(AsyncNamespace):
             "buffer_size": state.get_current_buffer_size(state.current_episode_id),
         })
 
+    async def on_delete_episode(self, sid: str, payload: dict):
+        """删除指定轮次的数据"""
+        episode_id = payload.get("episode_id")
+        if episode_id is None:
+            return
+
+        # 从内存中删除
+        if episode_id in state.episode_samples:
+            del state.episode_samples[episode_id]
+        if episode_id in state.episode_buffer:
+            del state.episode_buffer[episode_id]
+        if episode_id in state.episode_metadata:
+            del state.episode_metadata[episode_id]
+        if episode_id in state.episode_frame_index:
+            del state.episode_frame_index[episode_id]
+
+        # 重新广播轮次信息
+        await self.on_get_episodes(sid)
+
     async def on_get_episode_status(self, sid: str):
         """获取当前 episode 状态"""
         episode_id = state.current_episode_id

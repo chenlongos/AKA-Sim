@@ -42,6 +42,11 @@ export const getEpisodes = () => {
     socket.emit('get_episodes');
 }
 
+// 删除指定轮次的数据
+export const deleteEpisode = (episodeId: number) => {
+    socket.emit('delete_episode', { episode_id: episodeId });
+}
+
 // 开始新的 episode
 export const startEpisode = (episodeId: number, taskName: string = "default") => {
     socket.emit('start_episode', { episode_id: episodeId, task_name: taskName });

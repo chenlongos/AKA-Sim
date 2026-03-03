@@ -6,6 +6,7 @@ import {
     getCarState,
     setEpisode,
     getEpisodes,
+    deleteEpisode,
     startTraining,
     getTrainingStatus,
     stopTraining,
@@ -15,7 +16,7 @@ import {
     endEpisode,
     finalizeEpisode,
     getEpisodeStatus,
-    pauseCollection
+    sendImageData,
 } from "../api/socket";
 
 const MAP_W = 800;
@@ -129,13 +130,12 @@ const SimPage = () => {
             })
         })
 
-        // 监听轮次信息
+        // 监听轮次信息（只同步各轮次的数据量，不同步轮次号，由前端控制）
         socket.on("episode_info", (data: {
             current_episode: number;
             episodes: Record<number, number>;
             buffer_size?: number
         }) => {
-            setCurrentEpisode(data.current_episode)
             setEpisodeCounts(data.episodes)
         })
 
@@ -223,27 +223,45 @@ const SimPage = () => {
             }
             handleEndEpisode()
         }
+
+        // 重置帧数
+        setCollectedCount(0)
+
+        // 如果是回退到之前的轮次，删除当前轮次的数据
+        if (episodeId < currentEpisode) {
+            deleteEpisode(currentEpisode)
+            setCurrentEpisode(episodeId)
+            // 刷新轮次列表
+            getEpisodes()
+        } else {
+            setCurrentEpisode(episodeId)
+        }
         setEpisode(episodeId)
     }
 
     const handleStartEpisode = () => {
+        // 检查是否有上一轮的数据需要保存
+        if (episodeCounts[currentEpisode] && episodeCounts[currentEpisode] > 0) {
+            finalizeEpisode(currentEpisode)
+            // 刷新轮次列表
+            getEpisodes()
+        }
+
+        // 开始新录制（使用当前轮次，不改变轮次）
         startEpisode(currentEpisode, episodeTaskName)
     }
 
     const handleEndEpisode = () => {
+        // 结束录制并自动保存数据
         endEpisode(currentEpisode)
-    }
-
-    const handleFinalizeEpisode = () => {
+        // 自动保存
         finalizeEpisode(currentEpisode)
-    }
-
-    const handleGetEpisodeStatus = () => {
-        getEpisodeStatus()
-    }
-
-    const handlePauseCollection = () => {
-        pauseCollection()
+        // 轮次自动+1
+        setCurrentEpisode(currentEpisode + 1)
+        // 重置帧数
+        setCollectedCount(0)
+        // 刷新轮次列表
+        getEpisodes()
     }
 
     const handleStartTraining = async () => {
@@ -587,6 +605,8 @@ const SimPage = () => {
 
         let lastTime = 0;
         let lastSendTime = 0;
+        let lastCollectTime = 0;
+        const COLLECT_INTERVAL = 100; // 采集间隔(ms)，10fps
 
         const renderLoop = (currentTime: number) => {
             animationFrameId = window.requestAnimationFrame(renderLoop)
@@ -603,6 +623,15 @@ const SimPage = () => {
                 const actions = autoInference ? lastInferredActionRef.current : getCurrentActions()
                 sendActions(actions)
                 lastSendTime = currentTime
+            }
+
+            // 如果正在录制，收集数据
+            if (isRecording && currentTime - lastCollectTime >= COLLECT_INTERVAL) {
+                const actions = getCurrentActions()
+                // 从第一人称Canvas获取图像数据
+                const imageData = fpv.toDataURL('image/jpeg', 0.8)
+                sendImageData(imageData, actions)
+                lastCollectTime = currentTime
             }
 
             // 渲染
@@ -628,71 +657,74 @@ const SimPage = () => {
                     <div className="border-2 border-gray-800 rounded-lg bg-gray-100 p-3 flex flex-col gap-2">
                         <div className="font-semibold">训练控制</div>
 
-                        {/* Episode 管理 */}
-                        <div className="flex items-center gap-2">
-                            <label className="text-xs text-gray-600">任务名称:</label>
-                            <input
-                                type="text"
-                                value={episodeTaskName}
-                                onChange={(e) => setEpisodeTaskName(e.target.value)}
-                                disabled={isRecording}
-                                className="w-20 px-2 py-1 text-sm border rounded"
-                            />
-                        </div>
+                        {/* 数据收集流程 */}
+                        <div className="border border-gray-300 rounded p-2">
+                            <div className="text-xs font-semibold mb-2">数据采集</div>
 
-                        {/* Episode 状态 */}
-                        <div className="flex items-center gap-2">
-                            <span
-                                className={`text-xs px-2 py-0.5 rounded ${isRecording ? 'bg-red-500 text-black' : 'bg-gray-300'}`}>
-                                {isRecording ? '录制中' : '未录制'}
-                            </span>
-                        </div>
+                            {/* 录制状态 */}
+                            <div className="flex items-center gap-2 mb-2">
+                                <span
+                                    className={`text-xs px-2 py-0.5 rounded ${isRecording ? 'bg-red-500 text-black' : 'bg-gray-300'}`}>
+                                    {isRecording ? '收集中' : '未录制'}
+                                </span>
+                                {collectedCount > 0 && (
+                                    <span className="text-xs text-gray-600">{collectedCount} 帧</span>
+                                )}
+                            </div>
 
-                        {/* Episode 控制按钮 */}
-                        <div className="flex gap-2">
-                            {!isRecording ? (
-                                <button
-                                    onClick={handleStartEpisode}
-                                    className="px-2 py-1 text-xs bg-green-500 text-black rounded hover:bg-green-600"
-                                >
-                                    开始Episode
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={handleEndEpisode}
-                                    className="px-2 py-1 text-xs bg-red-500 text-black rounded hover:bg-red-600"
-                                >
-                                    结束Episode
-                                </button>
+                            {/* 操作按钮 */}
+                            <div className="flex flex-col gap-2">
+                                {isRecording ? (
+                                    // 录制中：显示结束按钮
+                                    <button
+                                        onClick={handleEndEpisode}
+                                        className="px-2 py-1.5 text-xs bg-red-500 text-black rounded hover:bg-red-600 font-medium"
+                                    >
+                                        结束采集 (第{currentEpisode}轮)
+                                    </button>
+                                ) : (
+                                    // 未录制：显示开始和复位按钮
+                                    <>
+                                        <button
+                                            onClick={handleStartEpisode}
+                                            className="px-2 py-1.5 text-xs bg-green-500 text-black rounded hover:bg-green-600 font-medium"
+                                        >
+                                            开始采集 (第{currentEpisode}轮)
+                                        </button>
+                                        <button
+                                            onClick={() => resetCar()}
+                                            className="px-2 py-1.5 text-xs bg-yellow-500 text-black rounded hover:bg-yellow-600 font-medium"
+                                        >
+                                            复位场景
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* 回退按钮 */}
+                            {!isRecording && currentEpisode > 1 && (
+                                <div className="mt-2 pt-2 border-t border-gray-200">
+                                    <button
+                                        onClick={() => handleSetEpisode(currentEpisode - 1)}
+                                        className="px-2 py-1 text-xs bg-gray-400 text-black rounded hover:bg-gray-500"
+                                    >
+                                        回退到第 {currentEpisode - 1} 轮
+                                    </button>
+                                </div>
                             )}
-                            <button
-                                onClick={handleFinalizeEpisode}
-                                disabled={!isRecording}
-                                className="px-2 py-1 text-xs bg-blue-500 text-black rounded hover:bg-blue-600 disabled:opacity-50"
-                            >
-                                保存
-                            </button>
-                            <button
-                                onClick={handleGetEpisodeStatus}
-                                className="px-2 py-1 text-xs bg-gray-300 rounded hover:bg-gray-400"
-                            >
-                                刷新
-                            </button>
                         </div>
 
-                        {/* 采集控制 - 暂停/恢复 */}
-                        {isRecording && (
-                            <div className="flex gap-2 mt-2">
-                                <button
-                                    onClick={handlePauseCollection}
-                                    className="px-2 py-1 text-xs bg-orange-500 text-black rounded hover:bg-orange-600"
-                                >
-                                    暂停采集
-                                </button>
+                        {/* 当前轮次 */}
+                        {!isRecording && (
+                            <div className="text-xs text-gray-600">
+                                当前轮次: {currentEpisode}
                             </div>
                         )}
 
                         {/* 轮次选择 */}
+                        <div className="text-xs text-gray-500 mb-1">
+                            可修改轮次重新采集
+                        </div>
                         <div className="flex items-center gap-2">
                             <label className="text-xs text-gray-600">采集轮次:</label>
                             <input
@@ -703,18 +735,11 @@ const SimPage = () => {
                                 disabled={isRecording}
                                 className="w-16 px-2 py-1 text-sm border rounded"
                             />
-                            <button
-                                onClick={() => handleSetEpisode(currentEpisode + 1)}
-                                disabled={isRecording}
-                                className="px-2 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
-                            >
-                                +1
-                            </button>
                         </div>
 
                         {/* 显示各轮次数据量 */}
                         {Object.keys(episodeCounts).length > 0 && (
-                            <div className="text-xs text-gray-600">
+                            <div className="text-xs text-gray-600 max-h-24 overflow-y-auto border rounded p-1">
                                 {Object.entries(episodeCounts).map(([ep, count]) => (
                                     <div key={ep} className="flex justify-between">
                                         <span>轮次 {ep}:</span>
