@@ -313,7 +313,16 @@ const SimPage = () => {
             carState.acceleration,
             carState.rotationSpeed
         ]
-        const result = await runInference(state)
+
+        // 获取第一人称视角的图像
+        const fpv = fpvRef.current
+        let imageBase64: string | undefined
+        if (fpv) {
+            imageBase64 = fpv.toDataURL('image/jpeg', 0.8)
+        }
+
+        const result = await runInference(state, imageBase64)
+        console.log('推理请求: imageBase64 length =', imageBase64?.length)
         if (result.success) {
             // 解析动作 - 支持多动作组合
             const actions: string[] = []
@@ -321,6 +330,7 @@ const SimPage = () => {
             // 取第一个动作，解码为文字
             const firstAction = result.action[0]
             console.log('模型输出:', firstAction)
+            console.log('  forward:', firstAction[0], 'backward:', firstAction[1], 'left:', firstAction[2], 'right:', firstAction[3], 'stop:', firstAction[4])
 
             // 使用阈值来判断激活哪些动作 (多动作组合)
             const threshold = 0.5

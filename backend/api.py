@@ -105,7 +105,7 @@ async def load_model(path: str):
 async def infer_act(request: ACTInferenceRequest):
     """ACT 模型推理 API"""
     try:
-        action = act_model_module.act_inference(request.state)
+        action = act_model_module.act_inference(request.state, request.image)
         return {
             "success": True,
             "action": action,
@@ -132,11 +132,12 @@ async def run_inference(body: dict = Body(...)):
     """运行推理"""
     try:
         state = body.get("state", [400, 300, -1.57, 0, 5, 0.2, 0.05])
+        image = body.get("image", None)
         if not act_model_module.is_model_loaded():
             # 尝试加载训练好的模型
             act_model_module.load_act_model()
 
-        action = act_model_module.act_inference(state)
+        action = act_model_module.act_inference(state, image)
         return {
             "success": True,
             "action": action,

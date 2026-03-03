@@ -102,11 +102,11 @@ export const loadTrainedModel = () => {
     return fetch('/api/act/load_trained', { method: 'POST' }).then(res => res.json());
 };
 
-export const runInference = (state: number[]) => {
+export const runInference = (state: number[], image?: string) => {
     return fetch('/api/act/run_inference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state }),
+        body: JSON.stringify({ state, image }),
     }).then(res => res.json());
 };
 

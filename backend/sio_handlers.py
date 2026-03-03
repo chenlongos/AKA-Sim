@@ -51,13 +51,20 @@ class SimNamespace(AsyncNamespace):
 
     async def on_act_infer(self, sid: str, payload: dict):
         """ACT 模型推理"""
-        logger.info(f"收到 ACT 推理请求: {payload}")
+        logger.info(f"收到 ACT 推理请求")
 
         try:
             import config as cfg
             inference_state = payload.get("state", [0.0] * cfg.config.STATE_DIM)
+            image = payload.get("image", None)
+            logger.info(f"state: {inference_state}, image provided: {image is not None}")
+            if image:
+                logger.info(f"image length: {len(image)}")
+
             from act_model import act_inference
-            action = act_inference(inference_state)
+            action = act_inference(inference_state, image)
+
+            logger.info(f"推理结果: {action[0]}")
 
             await self.emit("act_infer_result", {
                 "success": True,

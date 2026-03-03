@@ -2,12 +2,17 @@
 AKA-Sim 后端 - ACT 模型模块
 """
 
+import base64
+import io
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
+import numpy as np
 import torch
+from PIL import Image
+from torchvision import transforms
 
 from config import config
 
@@ -87,12 +92,57 @@ def load_act_model(model_path: str = None) -> "ACTModel":
     return _act_model
 
 
-def act_inference(state: list) -> list:
+def _process_image(image_input: Union[str, Image.Image, None]) -> torch.Tensor:
+    """
+    处理图像输入并转换为 tensor
+
+    Args:
+        image_input: base64 编码的图像字符串或 PIL Image 或 None
+
+    Returns:
+        图像 tensor [1, 1, 3, 224, 224]
+    """
+    if image_input is None:
+        logger.warning("未提供图像，使用随机噪声")
+        return torch.randn(1, 1, 3, 224, 224).to(_model_device)
+
+    try:
+        if isinstance(image_input, str):
+            # 处理 data URL 格式 (data:image/jpeg;base64,...)
+            if "," in image_input:
+                image_input = image_input.split(",")[1]
+            # base64 解码
+            image_data = base64.b64decode(image_input)
+            image = Image.open(io.BytesIO(image_data)).convert("RGB")
+            logger.info(f"图像处理成功，尺寸: {image.size}")
+        elif isinstance(image_input, Image.Image):
+            image = image_input.convert("RGB")
+            logger.info(f"PIL 图像处理成功，尺寸: {image.size}")
+        else:
+            logger.warning(f"不支持的图像类型: {type(image_input)}，使用随机噪声")
+            return torch.randn(1, 1, 3, 224, 224).to(_model_device)
+
+        # 图像预处理
+        transform_pipeline = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+        ])
+
+        image_tensor = transform_pipeline(image).unsqueeze(0).unsqueeze(0)  # [1, 1, 3, 224, 224]
+        return image_tensor.to(_model_device)
+
+    except Exception as e:
+        logger.warning(f"图像处理失败: {e}，使用随机噪声")
+        return torch.randn(1, 1, 3, 224, 224).to(_model_device)
+
+
+def act_inference(state: list, image: Optional[Union[str, Image.Image]] = None) -> list:
     """
     ACT 模型推理
 
     Args:
         state: 状态向量 [state_dim]
+        image: base64 编码的图像字符串或 PIL Image
 
     Returns:
         预测的动作序列 [action_chunk_size, action_dim]
@@ -107,12 +157,8 @@ def act_inference(state: list) -> list:
         # 准备输入
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(_model_device)
 
-        # 获取模型配置的维度
-        action_dim = _act_model.config.action_dim
-        action_chunk_size = _act_model.config.action_chunk_size
-
-        # 创建虚拟图像输入 (实际使用时应该传入真实图像)
-        image_tensor = torch.randn(1, 1, 3, 224, 224).to(_model_device)
+        # 处理图像输入
+        image_tensor = _process_image(image)
 
         # 推理
         action = _act_model.get_action(
