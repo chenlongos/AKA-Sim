@@ -248,19 +248,20 @@ async def train_model(
 
         logger.info(f"action_dim: {action_dim}, state_dim: {state_dim}, chunk_size: {action_chunk_size}")
 
-        # 创建配置
+        # 创建配置 - 与推理配置一致
         config = ACTConfig(
             state_dim=state_dim,
             action_dim=action_dim,
             action_chunk_size=action_chunk_size,
-            hidden_dim=256,  # 减小以加快训练
-            num_encoder_layers=2,
-            num_decoder_layers=2,
-            num_attention_heads=4,
+            hidden_dim=512,
+            num_encoder_layers=4,
+            num_decoder_layers=4,
+            num_attention_heads=8,
+            dim_feedforward=3200,
             use_cvae=False,
             use_temporal_ensembling=False,
             use_spatial_softmax=True,
-            latent_dim=16,
+            latent_dim=32,
         )
 
         # 创建模型
@@ -311,7 +312,6 @@ async def train_model(
                 optimizer.zero_grad()
 
                 # 使用forward进行训练 (不使用eval模式)
-                print(f"[TRAIN] images.shape: {images.shape}, states.shape: {states.shape}, actions.shape: {actions.shape}")
                 output = model(images, states, action_target=actions, infer_cvae=False)
                 predicted_actions = output["action"]
                 loss = criterion(predicted_actions, actions)
