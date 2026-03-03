@@ -311,6 +311,7 @@ async def train_model(
                 optimizer.zero_grad()
 
                 # 使用forward进行训练 (不使用eval模式)
+                print(f"[TRAIN] images.shape: {images.shape}, states.shape: {states.shape}, actions.shape: {actions.shape}")
                 output = model(images, states, action_target=actions, infer_cvae=False)
                 predicted_actions = output["action"]
                 loss = criterion(predicted_actions, actions)

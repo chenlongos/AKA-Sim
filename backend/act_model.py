@@ -4,8 +4,8 @@ AKA-Sim 后端 - ACT 模型模块
 
 import base64
 import io
+import json
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -26,30 +26,23 @@ _act_model: Optional["ACTModel"] = None
 _model_device = "cpu"
 _state_mean: Optional[torch.Tensor] = None
 _state_std: Optional[torch.Tensor] = None
+_action_mean: Optional[torch.Tensor] = None
+_action_std: Optional[torch.Tensor] = None
 
 
-def create_act_config(
-    state_dim: int = 7,
-    action_dim: int = 5,
-    action_chunk_size: int = 16,
-    hidden_dim: int = 512,
-    num_encoder_layers: int = 4,
-    num_decoder_layers: int = 4,
-    num_attention_heads: int = 8,
-    dim_feedforward: int = 3200,  # 根据 LeRobot: 3200
-) -> "ACTConfig":
-    """创建 ACT 模型配置"""
+def create_act_config() -> "ACTConfig":
+    """创建 ACT 模型配置 - 与训练时一致"""
     from policies.models.act.modeling_act import ACTConfig as PyACTConfig
 
     return PyACTConfig(
-        state_dim=state_dim,
-        action_dim=action_dim,
-        action_chunk_size=action_chunk_size,
-        hidden_dim=hidden_dim,
-        num_encoder_layers=num_encoder_layers,
-        num_decoder_layers=num_decoder_layers,
-        num_attention_heads=num_attention_heads,
-        dim_feedforward=dim_feedforward,
+        state_dim=7,
+        action_dim=5,
+        action_chunk_size=16,
+        hidden_dim=512,
+        num_attention_heads=8,
+        num_encoder_layers=4,
+        num_decoder_layers=4,
+        dim_feedforward=3200,  # LeRobot 使用 3200
         use_cvae=False,
         use_temporal_ensembling=False,
         use_spatial_softmax=True,
@@ -59,7 +52,7 @@ def create_act_config(
 
 def load_act_model(model_path: str = None) -> "ACTModel":
     """加载 ACT 模型"""
-    global _act_model
+    global _act_model, _state_mean, _state_std, _action_mean, _action_std
 
     from policies.models.act.modeling_act import ACTModel as PyACTModel
 
@@ -79,27 +72,11 @@ def load_act_model(model_path: str = None) -> "ACTModel":
 
     logger.info(f"从 {model_path} 加载模型权重")
 
-    # 加载state_dict获取维度信息
+    # 加载 state_dict
     state_dict = torch.load(model_path, map_location=_model_device, weights_only=True)
 
-    # 推断维度 - 使用固定的训练配置（必须与训练时一致！）
-    # 必须与 train_act.py 中的配置完全一致！
-    # - hidden_dim = 512
-    # - num_encoder_layers = 4
-    # - num_decoder_layers = 4
-    # - num_attention_heads = 8
-    # - use_cvae = False
-    # - use_temporal_ensembling = False
-    # - use_spatial_softmax = True
-    model_config = create_act_config(
-        state_dim=7,
-        action_dim=5,
-        action_chunk_size=16,
-        hidden_dim=512,
-        num_encoder_layers=4,
-        num_decoder_layers=4,  # 必须与训练时一致！
-        num_attention_heads=8,
-    )
+    # 创建配置（必须与训练时一致！）
+    model_config = create_act_config()
     _act_model = PyACTModel(model_config)
     _act_model.load_state_dict(state_dict)
 
@@ -107,22 +84,37 @@ def load_act_model(model_path: str = None) -> "ACTModel":
     _act_model.eval()
 
     # 加载归一化统计信息
-    global _state_mean, _state_std
     project_root = Path(__file__).parent.parent
-    data_dir = project_root / "output" / "dataset"  # 训练数据目录
+    data_dir = project_root / "output" / "dataset"
     stats_path = data_dir / "meta" / "stats.json"
 
     if stats_path.exists():
-        import json
         with open(stats_path, "r") as f:
             stats = json.load(f)
-        _state_mean = torch.tensor(stats["state_mean"], dtype=torch.float32)
-        _state_std = torch.tensor(stats["state_std"], dtype=torch.float32)
-        logger.info(f"加载归一化统计: mean={_state_mean}, std={_state_std}")
+
+        # 状态归一化统计
+        if "observation.state" in stats:
+            _state_mean = torch.tensor(stats["observation.state"]["mean"], dtype=torch.float32)
+            _state_std = torch.tensor(stats["observation.state"]["std"], dtype=torch.float32)
+            logger.info(f"状态归一化: mean={_state_mean}, std={_state_std}")
+        else:
+            _state_mean = torch.zeros(7)
+            _state_std = torch.ones(7)
+
+        # 动作归一化统计
+        if "action" in stats:
+            _action_mean = torch.tensor(stats["action"]["mean"], dtype=torch.float32)
+            _action_std = torch.tensor(stats["action"]["std"], dtype=torch.float32)
+            logger.info(f"动作归一化: mean={_action_mean}, std={_action_std}")
+        else:
+            _action_mean = torch.zeros(5)
+            _action_std = torch.ones(5)
     else:
         logger.warning(f"未找到归一化统计文件: {stats_path}，使用默认归一化")
         _state_mean = torch.zeros(7)
         _state_std = torch.ones(7)
+        _action_mean = torch.zeros(5)
+        _action_std = torch.ones(5)
 
     logger.info(f"ACT 模型加载完成，使用设备: {_model_device}")
     return _act_model
@@ -158,7 +150,7 @@ def _process_image(image_input: Union[str, Image.Image, None]) -> torch.Tensor:
             logger.warning(f"不支持的图像类型: {type(image_input)}，使用随机噪声")
             return torch.randn(1, 1, 3, 224, 224).to(_model_device)
 
-        # 图像预处理 - 使用 ImageNet 归一化
+        # 图像预处理 - 使用 ImageNet 归一化（与训练时一致）
         transform_pipeline = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -166,6 +158,7 @@ def _process_image(image_input: Union[str, Image.Image, None]) -> torch.Tensor:
         ])
 
         image_tensor = transform_pipeline(image).unsqueeze(0).unsqueeze(0)  # [1, 1, 3, 224, 224]
+        logger.info(f"图像 tensor shape: {image_tensor.shape}, mean: {image_tensor.mean().item():.4f}")
         return image_tensor.to(_model_device)
 
     except Exception as e:
@@ -186,34 +179,38 @@ def act_inference(state: list, image: Optional[Union[str, Image.Image]] = None) 
     """
     if _act_model is None:
         logger.warning("ACT 模型未加载，返回随机动作")
-        action_dim = 5  # 使用训练时的维度
+        action_dim = 5
         action_chunk_size = 16
         return [[0.0] * action_dim for _ in range(action_chunk_size)]
 
     with torch.no_grad():
-        # 准备输入并进行归一化
+        # 1. 准备状态输入并进行归一化
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(_model_device)
         logger.info(f"原始 state: {state}")
 
-        # 状态归一化 (与训练时一致)
         if _state_mean is not None and _state_std is not None:
             state_tensor = (state_tensor - _state_mean.to(_model_device)) / (_state_std.to(_model_device) + 1e-6)
             logger.info(f"归一化后 state: {state_tensor}")
 
-        # 处理图像输入
+        # 2. 处理图像输入
         image_tensor = _process_image(image)
-        logger.info(f"图像 tensor shape: {image_tensor.shape}, mean: {image_tensor.mean().item():.4f}")
+        logger.info(f"图像 tensor shape: {image_tensor.shape}")
 
-        # 推理
+        # 3. 推理
         action = _act_model.get_action(
             image_tensor,
             state_tensor,
             use_temporal_ensembling=False,
         )
 
-        logger.info(f"推理结果 action: {action[0][0].tolist()}")
+        logger.info(f"原始推理结果: {action[0][0].tolist()}")
 
-        # 转换为 Python 列表
+        # 4. 动作反归一化
+        if _action_mean is not None and _action_std is not None:
+            action = action * _action_std.to(_model_device) + _action_mean.to(_model_device)
+            logger.info(f"反归一化后: {action[0][0].tolist()}")
+
+        # 5. 转换为 Python 列表
         action_list = action.cpu().numpy()[0].tolist()
 
     return action_list

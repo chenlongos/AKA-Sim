@@ -96,7 +96,7 @@ const SimPage = () => {
         }) => {
             setCollectedCount(data.count)
             if (data.exported) {
-                alert(`数据已导出到: ${data.output_path}`)
+                // alert(`数据已导出到: ${data.output_path}`)
             } else if (data.error) {
                 alert(`导出失败: ${data.error}`)
             }
@@ -169,7 +169,7 @@ const SimPage = () => {
             setIsRecording(false)
             setCollectedCount(data.frame_count)
             if (data.exported) {
-                alert(`Episode ${data.episode_id} 数据已导出到: ${data.output_path}`)
+                // alert(`Episode ${data.episode_id} 数据已导出到: ${data.output_path}`)
             } else if (data.error) {
                 alert(`导出失败: ${data.error}`)
             }
@@ -183,7 +183,7 @@ const SimPage = () => {
             error?: string
         }) => {
             if (data.output_path) {
-                alert(`Episode ${data.episode_id} 已保存到: ${data.output_path}`)
+                // alert(`Episode ${data.episode_id} 已保存到: ${data.output_path}`)
             } else if (data.error) {
                 alert(`保存失败: ${data.error}`)
             }
