@@ -192,17 +192,20 @@ class LeRobotDatasetMetadata:
             image_bytes = base64.b64decode(image_data)
 
             # 根据总索引计算 chunk
-            frame_idx = episode_start_idx + i
-            chunk_idx = frame_idx // self.chunk_size
-            file_idx = frame_idx % self.chunk_size
+            # 使用全局递增的帧索引
+            global_frame_idx = episode_start_idx + i
+            chunk_idx = global_frame_idx // self.chunk_size
+            file_idx = global_frame_idx % self.chunk_size
 
             image_filename = f"frame_{file_idx:06d}.jpg"
             chunk_dir = self.videos_dir / f"chunk-{chunk_idx:03d}"
             chunk_dir.mkdir(exist_ok=True)
             image_path = chunk_dir / image_filename
 
-            with open(image_path, "wb") as f:
-                f.write(image_bytes)
+            # 如果图像已存在则跳过（避免覆盖）
+            if not image_path.exists():
+                with open(image_path, "wb") as f:
+                    f.write(image_bytes)
 
             # 收集状态
             state_values = [sample.get("state", {}).get(k, 0) for k in STATE_KEYS]
@@ -267,12 +270,19 @@ class LeRobotDatasetMetadata:
             chunk_file_dir = self.data_dir / f"chunk-{chunk_idx:03d}"
             chunk_file_dir.mkdir(exist_ok=True)
 
-            # 每 100 个样本一个文件
+            # 每 100 个样本一个文件（需要追加而不是覆盖）
             for file_idx in range(0, end_idx - start_idx, 100):
                 sub_end = min(file_idx + 100, end_idx - start_idx)
                 sub_df = df.iloc[file_idx:sub_end]
                 sub_file = chunk_file_dir / f"file-{file_idx // 100:03d}.parquet"
-                sub_df.to_parquet(sub_file, index=False)
+
+                # 如果文件已存在，读取并追加新数据
+                if sub_file.exists():
+                    existing_df = pd.read_parquet(sub_file)
+                    combined_df = pd.concat([existing_df, sub_df], ignore_index=True)
+                    combined_df.to_parquet(sub_file, index=False)
+                else:
+                    sub_df.to_parquet(sub_file, index=False)
 
         # 更新统计
         self._update_stats(state_min, state_max, state_mean, state_std, action_counts)

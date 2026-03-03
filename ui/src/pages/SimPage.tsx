@@ -252,10 +252,8 @@ const SimPage = () => {
     }
 
     const handleEndEpisode = () => {
-        // 结束录制并自动保存数据
+        // 结束录制并自动保存数据（endEpisode会自动导出，所以不需要再调用finalizeEpisode）
         endEpisode(currentEpisode)
-        // 自动保存
-        finalizeEpisode(currentEpisode)
         // 轮次自动+1
         setCurrentEpisode(currentEpisode + 1)
         // 重置帧数
