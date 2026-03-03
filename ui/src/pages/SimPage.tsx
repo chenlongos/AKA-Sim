@@ -313,7 +313,7 @@ const SimPage = () => {
         const result = await runInference(state, imageBase64)
         console.log('推理请求: imageBase64 length =', imageBase64?.length)
         if (result.success) {
-            // 解析动作 - 模型输出回归值，选择最大的那个
+            // 解析动作 - 用阈值提取多个动作
             const actions: string[] = []
             // result.action 是 [action_chunk_size, action_dim] 的二维数组
             // 取第一个动作
@@ -322,13 +322,26 @@ const SimPage = () => {
             console.log('模型输出:', firstAction)
             console.log('  forward:', firstAction[0], 'backward:', firstAction[1], 'left:', firstAction[2], 'right:', firstAction[3], 'stop:', firstAction[4])
 
-            // 直接选择值最大的动作（回归模式）
+            // 用阈值提取多个动作（多标签模式）
             const actionNames = ['forward', 'backward', 'left', 'right', 'stop']
-            const maxIdx = firstAction.indexOf(Math.max(...firstAction))
-            const predictedAction = actionNames[maxIdx]
-            actions.push(predictedAction)
+            const threshold = 0.01  // 阈值，超过该值就执行对应动作
 
-            console.log('预测动作:', predictedAction)
+            // 找出所有超过阈值的动作
+            for (let i = 0; i < firstAction.length; i++) {
+                if (firstAction[i] > threshold) {
+                    actions.push(actionNames[i])
+                    console.log(`  执行 ${actionNames[i]}: ${firstAction[i]} > ${threshold}`)
+                }
+            }
+
+            // 如果没有超过阈值的动作，选择最大的那个作为默认
+            if (actions.length === 0) {
+                const maxIdx = firstAction.indexOf(Math.max(...firstAction))
+                actions.push(actionNames[maxIdx])
+                console.log('无动作超过阈值，使用最大:', actionNames[maxIdx])
+            }
+
+            console.log('预测动作:', actions)
 
             setInferenceResult(actions)
             lastInferredActionRef.current = actions
