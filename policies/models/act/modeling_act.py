@@ -437,7 +437,7 @@ class ACTModel(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=config.hidden_dim,
             nhead=config.num_attention_heads,
-            dim_feedforward=config.hidden_dim * 4,
+            dim_feedforward=config.dim_feedforward,  # 使用配置中的值 (3200)
             dropout=config.dropout,
             activation="gelu",
             batch_first=True,
@@ -451,7 +451,7 @@ class ACTModel(nn.Module):
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=config.hidden_dim,
             nhead=config.num_attention_heads,
-            dim_feedforward=config.hidden_dim * 4,
+            dim_feedforward=config.dim_feedforward,  # 使用配置中的值 (3200)
             dropout=config.dropout,
             activation="gelu",
             batch_first=True,
