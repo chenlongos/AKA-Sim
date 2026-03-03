@@ -251,10 +251,18 @@ class SimNamespace(AsyncNamespace):
             # 获取当前车辆状态
             car_state_copy = state.car_state.copy()
 
+            # 只保留有变化的状态：x, y, angle, speed (去掉常量 maxSpeed, acceleration, rotationSpeed)
+            state_4d = {
+                "x": car_state_copy.get("x", 0),
+                "y": car_state_copy.get("y", 0),
+                "angle": car_state_copy.get("angle", 0),
+                "speed": car_state_copy.get("speed", 0),
+            }
+
             # 保存样本到当前轮次
             sample = {
                 "image": image_data,  # base64编码的JPEG图像
-                "state": car_state_copy,
+                "state": state_4d,
                 "actions": actions,
             }
 

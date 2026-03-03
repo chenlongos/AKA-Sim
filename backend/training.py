@@ -185,6 +185,10 @@ class SimpleDataset(torch.utils.data.Dataset):
         state = self.data["observation.state"][idx]
         action = self.data["action"][idx]
 
+        # 只保留有变化的状态：x, y, angle, speed (前4维)
+        # 去掉常量：maxSpeed, acceleration, rotationSpeed
+        state = state[:4]
+
         # 归一化图像
         images = (images.unsqueeze(0) - self.image_mean) / self.image_std
 
@@ -243,14 +247,17 @@ async def train_model(
 
         # 获取动作维度
         action_dim = data["action"].shape[-1]
-        state_dim = data["observation.state"].shape[-1]
+        raw_state_dim = data["observation.state"].shape[-1]
         action_chunk_size = data["action"].shape[1]
 
-        logger.info(f"action_dim: {action_dim}, state_dim: {state_dim}, chunk_size: {action_chunk_size}")
+        # 只使用前 4 维：x, y, angle, speed
+        state_dim = 4
+
+        logger.info(f"action_dim: {action_dim}, state_dim: {state_dim} (原始: {raw_state_dim}), chunk_size: {action_chunk_size}")
 
         # 创建配置 - 与推理配置一致
         config = ACTConfig(
-            state_dim=state_dim,
+            state_dim=4,  # 只用 x, y, angle, speed
             action_dim=action_dim,
             action_chunk_size=action_chunk_size,
             hidden_dim=512,

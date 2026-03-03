@@ -27,8 +27,8 @@ DEFAULT_FPS = 10
 ACTION_TO_IDX = {"forward": 0, "backward": 1, "left": 2, "right": 3, "stop": 4}
 ACTION_DIM = len(ACTION_TO_IDX)
 
-# 状态编码 (7维)
-STATE_KEYS = ["x", "y", "angle", "speed", "maxSpeed", "acceleration", "rotationSpeed"]
+# 状态编码 (4维) - 只保留有变化的状态
+STATE_KEYS = ["x", "y", "angle", "speed"]  # 去掉常量: maxSpeed, acceleration, rotationSpeed
 STATE_DIM = len(STATE_KEYS)
 
 

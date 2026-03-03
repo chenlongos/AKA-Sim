@@ -32,10 +32,6 @@ interface CarState {
     y: number;
     angle: number;
     speed: number;
-    maxSpeed: number;
-    acceleration: number;
-    friction: number;
-    rotationSpeed: number;
 }
 
 const SimPage = () => {
@@ -47,10 +43,6 @@ const SimPage = () => {
         y: 300,
         angle: -Math.PI / 2,
         speed: 0,
-        maxSpeed: 5,
-        acceleration: 0.2,
-        friction: 0.95,
-        rotationSpeed: 0.05
     })
     const [collectedCount, setCollectedCount] = useState(0)
     const [isTraining, setIsTraining] = useState(false)
@@ -309,9 +301,6 @@ const SimPage = () => {
             carState.y,
             carState.angle,
             carState.speed,
-            carState.maxSpeed,
-            carState.acceleration,
-            carState.rotationSpeed
         ]
 
         // 获取第一人称视角的图像

@@ -35,7 +35,7 @@ def create_act_config() -> "ACTConfig":
     from policies.models.act.modeling_act import ACTConfig as PyACTConfig
 
     return PyACTConfig(
-        state_dim=7,
+        state_dim=4,  # 只用 x, y, angle, speed
         action_dim=5,
         action_chunk_size=16,
         hidden_dim=512,
@@ -185,11 +185,18 @@ def act_inference(state: list, image: Optional[Union[str, Image.Image]] = None) 
 
     with torch.no_grad():
         # 1. 准备状态输入并进行归一化
+        # 只用前 4 维：x, y, angle, speed
+        state = state[:4]
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(_model_device)
         logger.info(f"原始 state: {state}")
 
         if _state_mean is not None and _state_std is not None:
-            state_tensor = (state_tensor - _state_mean.to(_model_device)) / (_state_std.to(_model_device) + 1e-6)
+            # 只用前 4 维的 mean/std
+            state_mean = _state_mean[:4].to(_model_device)
+            state_std = _state_std[:4].to(_model_device)
+            # 确保 std 不为 0
+            state_std = torch.where(state_std > 1e-6, state_std, torch.ones_like(state_std))
+            state_tensor = (state_tensor - state_mean) / state_std
             logger.info(f"归一化后 state: {state_tensor}")
 
         # 2. 处理图像输入
