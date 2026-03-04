@@ -18,6 +18,7 @@ import {
     getEpisodeStatus,
     sendImageData,
 } from "../api/socket";
+import type {CarState} from "../models/types.ts";
 
 const MAP_W = 800;
 const MAP_H = 600;
@@ -25,14 +26,6 @@ const MAP_H = 600;
 const FPS = 30
 const SEND_INTERVAL = 50 // 发送控制指令间隔(ms)
 const frameInterval = 1000 / FPS
-
-// 小车状态类型
-interface CarState {
-    x: number;
-    y: number;
-    angle: number;
-    speed: number;
-}
 
 const SimPage = () => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
