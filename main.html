@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LeRobot ACT Simulator (Main)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #0a0a0f; color: #e0e0e0; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glass-panel {
+            background: rgba(20, 20, 30, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 100, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        .recording-pulse { animation: pulse-red 1.5s infinite; }
+        @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .grid-bg {
+            background-image: 
+                linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        .control-btn:active { transform: scale(0.95); }
+        .log-entry { border-left: 2px solid transparent; padding-left: 8px; margin: 2px 0; font-size: 0.85rem; }
+        .log-info { border-left-color: #3b82f6; color: #93c5fd; }
+        .log-success { border-left-color: #10b981; color: #6ee7b7; }
+        .log-warning { border-left-color: #f59e0b; color: #fcd34d; }
+        .log-error { border-left-color: #ef4444; color: #fca5a5; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #5f82aa; border-radius: 2px; }
+        .attention-heatmap {
+            background: radial-gradient(circle at 50% 50%, rgba(255, 0, 0, 0.3), transparent 70%);
+            mix-blend-mode: screen;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col grid-bg">
+
+    <!-- Header -->
+    <header class="glass-panel border-b border-slate-800 px-6 py-4 flex justify-between items-center z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">🤖</div>
+            <div>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">LeRobot ACT Simulator</h1>
+                <p class="text-xs text-slate-400 mono">Action Chunking with Transformers - Main Edition</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 text-sm">
+            <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span class="text-slate-300">Simulation Active</span>
+            </div>
+            <div class="mono text-xs text-slate-500">60 FPS</div>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-80 glass-panel border-r border-slate-800 flex flex-col overflow-y-auto z-10">
+            <div class="p-4 space-y-6">
+                
+                <!-- Training Mode Toggle -->
+                <div class="bg-slate-900/50 p-1 rounded-lg flex text-xs font-medium border border-slate-800">
+                    <button id="modeFrontendBtn" class="flex-1 py-1.5 rounded-md transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/20">前端训练 (Frontend)</button>
+                    <button id="modeCloudBtn" class="flex-1 py-1.5 rounded-md transition-all text-slate-400 hover:text-slate-300">云端训练 (Cloud)</button>
+                </div>
+
+                <!-- Cloud Config (Hidden by default) -->
+                <div id="cloudConfigPanel" class="space-y-3 p-3 bg-purple-900/10 border border-purple-500/20 rounded-lg hidden">
+                    <h3 class="text-xs font-semibold text-purple-400 uppercase tracking-wider flex items-center gap-2">☁️ 云端配置</h3>
+                    
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-400 block">选择数据集</label>
+                        <div class="flex gap-2">
+                            <select id="cloudDatasetSelect" class="flex-1 bg-slate-800 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-purple-500">
+                                <option value="">-- Select Dataset --</option>
+                            </select>
+                            <button id="refreshCloudDatasetsBtn" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">↻</button>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-xs text-slate-400 block">选择模型</label>
+                        <div class="flex gap-2">
+                            <select id="cloudModelSelect" class="flex-1 bg-slate-800 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-purple-500">
+                                <option value="">-- Select Model --</option>
+                            </select>
+                            <button id="refreshCloudModelsBtn" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">↻</button>
+                        </div>
+                    </div>
+
+                    <div id="cloudStatusDisplay" class="text-[10px] mono bg-black/30 p-2 rounded border border-purple-500/10 text-purple-300 hidden"></div>
+                </div>
+
+                <!-- Scene Settings -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">场景设置</h3>
+                    <div class="space-y-2">
+                        <select id="sceneType" class="w-full bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                            <option value="basic">基础场景 (Basic)</option>
+                            <option value="living_room">客厅场景 (Living Room)</option>
+                            <option value="classroom">教室场景 (Classroom)</option>
+                            <option value="tennis_court">网球场 (Tennis Court)</option>
+                        </select>
+                        <div class="flex gap-2">
+                            <select id="sceneSize" class="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs">
+                                <option value="small">小尺寸</option>
+                                <option value="medium" selected>中尺寸</option>
+                                <option value="large">大尺寸</option>
+                            </select>
+                            <select id="sceneComplexity" class="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs">
+                                <option value="low">低复杂度</option>
+                                <option value="medium" selected>中复杂度</option>
+                                <option value="high">高复杂度</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Light Settings -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">光源设置</h3>
+                    <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">X:</span> <input type="range" id="lightX" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">Y:</span> <input type="range" id="lightY" min="5" max="40" value="20" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">Z:</span> <input type="range" id="lightZ" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Robot Control -->
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">小车控制</h3>
+                        <button id="resetRobotBtn" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-2 py-1 rounded transition-all">↺ 复位</button>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">速度:</span>
+                            <input type="range" id="speedRange" min="0.05" max="0.5" step="0.01" value="0.1" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <span id="speedVal" class="w-8 text-right">0.10</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">转向:</span>
+                            <input type="range" id="turnSpeedRange" min="0.01" max="0.2" step="0.01" value="0.05" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <span id="turnSpeedVal" class="w-8 text-right">0.05</span>
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
+                        <div></div>
+                        <button id="btnW" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">↑</span><span class="text-[10px]">W</span>
+                        </button>
+                        <div></div>
+                        <button id="btnA" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">←</span><span class="text-[10px]">A</span>
+                        </button>
+                        <button id="btnS" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">↓</span><span class="text-[10px]">S</span>
+                        </button>
+                        <button id="btnD" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">→</span><span class="text-[10px]">D</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Data Collection -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <span id="recordingIndicator" class="w-2 h-2 rounded-full bg-red-500 opacity-30"></span>
+                        数据采集
+                    </h3>
+                    <div class="flex gap-2">
+                        <button id="toggleRecordBtn" class="flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                            <span id="recordBtnDot" class="w-2 h-2 rounded-full bg-red-500"></span>
+                            <span id="recordBtnText">开始采集</span>
+                        </button>
+                    </div>
+                    <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                        <input type="checkbox" id="collisionProtection" checked class="w-4 h-4 rounded bg-slate-800 border-slate-700 accent-blue-500">
+                        <span>开启碰撞保护 (撞墙自动停止)</span>
+                    </label>
+                    <div class="text-xs text-slate-400 mono bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <div>Episodes: <span id="episodesCount" class="text-blue-400">0</span></div>
+                        <div>Frames: <span id="frameCount" class="text-blue-400">0</span></div>
+                        <div>Actions: <span id="actionCount" class="text-blue-400">0</span></div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="saveDatasetBtn" disabled class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded-lg text-sm transition-all disabled:opacity-50">保存 (Save)</button>
+                        <label class="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded-lg text-sm transition-all flex items-center justify-center">
+                            导入 (Import)
+                            <input type="file" id="importDatasetInput" accept=".json" class="hidden">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Training -->
+                <div class="space-y-3">
+                    <h3 id="trainingHeader" class="text-sm font-semibold text-slate-300 uppercase tracking-wider">ACT 模型训练</h3>
+                    <button id="startTrainingBtn" disabled class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50">开始训练模型</button>
+                    <div id="trainingProgressContainer" class="space-y-2 hidden">
+                        <div class="flex justify-between text-xs text-slate-400">
+                            <span>Training...</span>
+                            <span id="trainingPercent">0%</span>
+                        </div>
+                        <div class="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                            <div id="trainingBar" class="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <div id="trainingStatusText" class="text-xs text-slate-500 mono">Preparing...</div>
+                    </div>
+                </div>
+
+                <!-- Inference -->
+                <div class="space-y-3">
+                    <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">模型推理</h3>
+                    <div id="cloudModelDisplay" class="text-xs text-purple-300 bg-purple-900/20 p-2 rounded border border-purple-500/20 mb-2 hidden">
+                        当前云端模型: <span id="currentCloudModelName">未选择</span>
+                    </div>
+                    <select id="modelSelect" class="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                        <option value="" disabled selected>ACT_Model_v1 (请先训练)</option>
+                    </select>
+                    <button id="toggleInferenceBtn" disabled class="w-full bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50">启动自主推理</button>
+                    <div class="flex items-center gap-2 text-xs text-slate-500">
+                        <input type="checkbox" id="showAttention" class="rounded bg-slate-800 border-slate-600">
+                        <label for="showAttention">显示注意力热力图</label>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <main class="flex-1 relative bg-slate-950">
+            <div id="canvasContainer" class="absolute inset-0"></div>
+            
+            <div class="absolute top-4 left-4 glass-panel rounded-lg p-3 text-xs mono space-y-1 pointer-events-none">
+                <div class="text-slate-400">Position: <span id="posX" class="text-blue-400">0.00</span>, <span id="posZ" class="text-blue-400">0.00</span></div>
+                <div class="text-slate-400">Rotation: <span id="rotY" class="text-purple-400">0°</span></div>
+                <div class="text-slate-400">Velocity: <span id="velocityDisplay" class="text-green-400">0.0</span> m/s</div>
+            </div>
+
+            <div id="statusBadge" class="absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-slate-300 border-slate-700">
+                手动控制模式
+            </div>
+        </main>
+
+        <!-- Right Sidebar (Camera & Logs) -->
+        <aside class="w-96 glass-panel border-l border-slate-800 flex flex-col z-10">
+            <div class="h-48 bg-black border-b border-slate-800 relative">
+                <canvas id="cameraCanvas" class="w-full h-full object-cover"></canvas>
+                <div class="absolute top-2 left-2 text-xs mono text-green-400 bg-black/50 px-2 py-1 rounded">CAM_01 (Onboard)</div>
+                <div class="absolute bottom-2 right-2 text-xs text-slate-500">30 FPS</div>
+                <div id="attentionHeatmap" class="absolute inset-0 attention-heatmap pointer-events-none transition-opacity duration-300 opacity-0"></div>
+            </div>
+
+            <!-- Action Chunking Visualization -->
+            <div class="h-32 border-b border-slate-800 p-3 bg-slate-900/30">
+                <h4 class="text-xs font-semibold text-slate-400 mb-2 uppercase">Action Chunking (ACT)</h4>
+                <div id="actionChunkViz" class="flex items-end gap-1 h-16">
+                    <div class="flex-1 bg-slate-800 rounded-t text-center text-[10px] text-slate-600 pt-2">Waiting...</div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-600 mt-1 mono">
+                    <span>t+0</span>
+                    <span>t+4</span>
+                    <span>t+8</span>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col min-h-0">
+                <div class="p-3 border-b border-slate-800 flex justify-between items-center">
+                    <h4 class="text-xs font-semibold text-slate-400 uppercase">System Logs</h4>
+                    <button id="clearLogsBtn" class="text-[10px] text-slate-600 hover:text-slate-400">Clear</button>
+                </div>
+                <div id="logContainer" class="flex-1 overflow-y-auto p-3 space-y-1 text-xs mono">
+                    <div class="log-entry log-info">[System] Initialized. Waiting for commands...</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // --- Global State ---
+        const state = {
+            robot: { x: 0, z: 0, rotation: 0, velocity: 0, angularVelocity: 0 },
+            keys: {},
+            isRecording: false,
+            isTraining: false,
+            isInferencing: false,
+            trainingMode: 'frontend', // 'frontend' | 'cloud'
+            episodes: [],
+            currentEpisode: [],
+            walls: [],
+            target: null,
+            model: null,
+            actionBuffer: [],
+            lastX: 0,
+            lastZ: 0,
+            stuckCounter: 0,
+            cloudModels: [],
+            cloudDatasets: [],
+            selectedCloudModel: '',
+            selectedCloudDataset: '',
+            cloudTrainingStatus: null,
+            config: {
+                speed: 0.1,
+                turnSpeed: 0.05,
+                sceneType: 'basic',
+                sceneSize: 'medium',
+                sceneComplexity: 'medium',
+                collisionProtection: true,
+                lightPos: { x: 10, y: 20, z: 10 }
+            }
+        };
+
+        // --- Services ---
+        const cloudService = {
+            baseUrl: "http://127.0.0.1:5000",
+            async fetchModels() {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/models', { mode: 'cors' });
+                    const data = await res.json();
+                    return data.models || [];
+                } catch (e) { console.error(e); return []; }
+            },
+            async fetchDatasets() {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/datasets', { mode: 'cors' });
+                    const data = await res.json();
+                    return data.datasets || [];
+                } catch (e) { console.error(e); return []; }
+            },
+            async saveDataset(dataset) {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/dataset', {
+                        method: 'POST', mode: 'cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(dataset)
+                    });
+                    const data = await res.json();
+                    return data.status === 'success';
+                } catch (e) { console.error(e); return false; }
+            },
+            async startTraining(datasetPath) {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/train/start', {
+                        method: 'POST', mode: 'cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dataset_path: datasetPath })
+                    });
+                    return res.ok;
+                } catch (e) { console.error(e); return false; }
+            },
+            async getTrainingStatus() {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/train/status', { mode: 'cors' });
+                    return await res.json();
+                } catch (e) { return null; }
+            },
+            async startInference(modelId) {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/infer/start', {
+                        method: 'POST', mode: 'cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model_id: modelId })
+                    });
+                    return res.ok;
+                } catch (e) { console.error(e); return false; }
+            },
+            async stopInference() {
+                try {
+                    await fetch(this.baseUrl + '/api/infer/stop', { method: 'POST', mode: 'cors' });
+                    return true;
+                } catch (e) { return false; }
+            },
+            async runInferenceStep(stateVec, envStateVec) {
+                try {
+                    const res = await fetch(this.baseUrl + '/api/infer/step', {
+                        method: 'POST', mode: 'cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ state: stateVec, env_state: envStateVec })
+                    });
+                    const data = await res.json();
+                    return data.action || null;
+                } catch (e) { return null; }
+            }
+        };
+
+        const actService = {
+            CHUNK_SIZE: 10,
+            prepareTrainingData(episodes) {
+                const imageInputs = [];
+                const stateInputs = [];
+                const labelChunks = [];
+                
+                episodes.forEach(episode => {
+                    for (let i = 0; i < episode.length; i++) {
+                        if (!episode[i].image) continue;
+                        const chunk = [];
+                        for (let k = 0; k < this.CHUNK_SIZE; k++) {
+                            const futureIndex = Math.min(i + k, episode.length - 1);
+                            const futureFrame = episode[futureIndex];
+                            let v=0, w=0;
+                            const a = futureFrame.action;
+                            if(a[0]) v = 0.1;
+                            else if(a[1]) v = -0.1;
+                            else if(a[2]) w = 0.05;
+                            else if(a[3]) w = -0.05;
+                            chunk.push(v, w);
+                        }
+                        imageInputs.push(episode[i].image);
+                        stateInputs.push(episode[i].state);
+                        labelChunks.push(chunk);
+                    }
+                });
+                return { imageInputs, stateInputs, labelChunks };
+            },
+            packDataset(episodes) {
+                const states = [];
+                const env_states = [];
+                const actions = [];
+                const action_is_pad = [];
+                const images = [];
+                let hasImages = false;
+
+                episodes.forEach(ep => {
+                    for (let i = 0; i < ep.length; i += this.CHUNK_SIZE) {
+                        const chunkSteps = ep.slice(i, i + this.CHUNK_SIZE);
+                        const firstStep = chunkSteps[0];
+                        
+                        const s = firstStep.state || new Array(14).fill(0);
+                        const es = new Array(7).fill(0);
+                        es[0]=s[0]; es[1]=s[1]; es[2]=s[2]; es[3]=s[3]; es[4]=s[5];
+                        es[6]=s[4];
+
+                        const actionChunk = [];
+                        const padChunk = [];
+                        const imageChunk = [];
+
+                        chunkSteps.forEach(step => {
+                            actionChunk.push(step.action);
+                            padChunk.push(0);
+                            const img = step.imageBase64 || "";
+                            if (img) hasImages = true;
+                            imageChunk.push([img]);
+                        });
+
+                        for (let pad = chunkSteps.length; pad < this.CHUNK_SIZE; pad++) {
+                            actionChunk.push([0,0,0,0,1]);
+                            padChunk.push(1);
+                            imageChunk.push([""]);
+                        }
+
+                        states.push(s);
+                        env_states.push(es);
+                        actions.push(actionChunk);
+                        action_is_pad.push(padChunk);
+                        images.push(imageChunk);
+                    }
+                });
+                return { states, env_states, actions, action_is_pad, images: hasImages ? images : undefined };
+            },
+            createModel() {
+                const imageInput = tf.input({shape: [64, 64, 3]});
+                const stateInput = tf.input({shape: [14]});
+
+                const h1 = tf.layers.conv2d({filters: 16, kernelSize: 3, activation: 'relu'}).apply(imageInput);
+                const h2 = tf.layers.maxPooling2d({poolSize: 2}).apply(h1);
+                const h3 = tf.layers.conv2d({filters: 32, kernelSize: 3, activation: 'relu'}).apply(h2);
+                const h4 = tf.layers.maxPooling2d({poolSize: 2}).apply(h3);
+                const h5 = tf.layers.flatten().apply(h4);
+                
+                const s1 = tf.layers.dense({units: 32, activation: 'relu'}).apply(stateInput);
+                
+                const concatenated = tf.layers.concatenate().apply([h5, s1]);
+                
+                const d1 = tf.layers.dense({units: 128, activation: 'relu'}).apply(concatenated);
+                const output = tf.layers.dense({units: this.CHUNK_SIZE * 2, activation: 'linear'}).apply(d1);
+                
+                const model = tf.model({inputs: [imageInput, stateInput], outputs: output});
+                model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+                
+                return model;
+            },
+            async trainModel(model, data, onEpochEnd) {
+                const xsImage = tf.tensor4d(data.imageInputs);
+                const xsState = tf.tensor2d(data.stateInputs);
+                const ys = tf.tensor2d(data.labelChunks);
+
+                await model.fit([xsImage, xsState], ys, {
+                    epochs: 50,
+                    batchSize: 32,
+                    shuffle: true,
+                    callbacks: {
+                        onEpochEnd
+                    }
+                });
+
+                xsImage.dispose();
+                xsState.dispose();
+                ys.dispose();
+            },
+            predict(model, image, state) {
+                return tf.tidy(() => {
+                    const imageTensor = tf.tensor4d([image]);
+                    const stateTensor = tf.tensor2d([state]);
+                    const prediction = model.predict([imageTensor, stateTensor]);
+                    return prediction.dataSync();
+                });
+            }
+
+        };
+
+        // --- DOM Elements ---
+        const els = {
+            container: document.getElementById('canvasContainer'),
+            cameraCanvas: document.getElementById('cameraCanvas'),
+            logContainer: document.getElementById('logContainer'),
+            posX: document.getElementById('posX'),
+            posZ: document.getElementById('posZ'),
+            rotY: document.getElementById('rotY'),
+            vel: document.getElementById('velocityDisplay'),
+            statusBadge: document.getElementById('statusBadge'),
+            episodesCount: document.getElementById('episodesCount'),
+            frameCount: document.getElementById('frameCount'),
+            actionCount: document.getElementById('actionCount'),
+            toggleRecordBtn: document.getElementById('toggleRecordBtn'),
+            recordBtnText: document.getElementById('recordBtnText'),
+            recordBtnDot: document.getElementById('recordBtnDot'),
+            recordingIndicator: document.getElementById('recordingIndicator'),
+            saveDatasetBtn: document.getElementById('saveDatasetBtn'),
+            startTrainingBtn: document.getElementById('startTrainingBtn'),
+            trainingProgressContainer: document.getElementById('trainingProgressContainer'),
+            trainingBar: document.getElementById('trainingBar'),
+            trainingPercent: document.getElementById('trainingPercent'),
+            trainingStatusText: document.getElementById('trainingStatusText'),
+            modelSelect: document.getElementById('modelSelect'),
+            toggleInferenceBtn: document.getElementById('toggleInferenceBtn'),
+            collisionProtection: document.getElementById('collisionProtection'),
+            modeFrontendBtn: document.getElementById('modeFrontendBtn'),
+            modeCloudBtn: document.getElementById('modeCloudBtn'),
+            cloudConfigPanel: document.getElementById('cloudConfigPanel'),
+            cloudDatasetSelect: document.getElementById('cloudDatasetSelect'),
+            refreshCloudDatasetsBtn: document.getElementById('refreshCloudDatasetsBtn'),
+            cloudModelSelect: document.getElementById('cloudModelSelect'),
+            refreshCloudModelsBtn: document.getElementById('refreshCloudModelsBtn'),
+            cloudStatusDisplay: document.getElementById('cloudStatusDisplay'),
+            trainingHeader: document.getElementById('trainingHeader'),
+            cloudModelDisplay: document.getElementById('cloudModelDisplay'),
+            currentCloudModelName: document.getElementById('currentCloudModelName'),
+            showAttention: document.getElementById('showAttention'),
+            attentionHeatmap: document.getElementById('attentionHeatmap'),
+            actionChunkViz: document.getElementById('actionChunkViz'),
+            sceneType: document.getElementById('sceneType'),
+            sceneSize: document.getElementById('sceneSize'),
+            sceneComplexity: document.getElementById('sceneComplexity'),
+            lightX: document.getElementById('lightX'),
+            lightY: document.getElementById('lightY'),
+            lightZ: document.getElementById('lightZ'),
+            speedRange: document.getElementById('speedRange'),
+            speedVal: document.getElementById('speedVal'),
+            turnSpeedRange: document.getElementById('turnSpeedRange'),
+            turnSpeedVal: document.getElementById('turnSpeedVal'),
+            clearLogsBtn: document.getElementById('clearLogsBtn'),
+        };
+
+        // --- Mode Switching ---
+        function setTrainingMode(mode) {
+            state.trainingMode = mode;
+            if (mode === 'frontend') {
+                els.modeFrontendBtn.className = 'flex-1 py-1.5 rounded-md transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/20';
+                els.modeCloudBtn.className = 'flex-1 py-1.5 rounded-md transition-all text-slate-400 hover:text-slate-300';
+                els.cloudConfigPanel.classList.add('hidden');
+                els.startTrainingBtn.className = 'w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50';
+                els.startTrainingBtn.textContent = '开始训练模型';
+                els.saveDatasetBtn.textContent = '保存 (Save)';
+                els.toggleInferenceBtn.textContent = state.isInferencing ? '停止推理' : '启动自主推理';
+                els.trainingHeader.textContent = 'ACT 模型训练';
+                els.cloudModelDisplay.classList.add('hidden');
+                
+                // Reset model select for frontend
+                els.modelSelect.innerHTML = '<option value="" disabled selected>ACT_Model_v1 (请先训练)</option>';
+                if(state.model) {
+                    const opt = document.createElement('option');
+                    opt.text = 'ACT_Model_v1 (Ready)';
+                    opt.value = 'v1';
+                    els.modelSelect.appendChild(opt);
+                }
+                els.modelSelect.classList.remove('hidden');
+            } else {
+                els.modeFrontendBtn.className = 'flex-1 py-1.5 rounded-md transition-all text-slate-400 hover:text-slate-300';
+                els.modeCloudBtn.className = 'flex-1 py-1.5 rounded-md transition-all bg-purple-600 text-white shadow-lg shadow-purple-500/20';
+                els.cloudConfigPanel.classList.remove('hidden');
+                els.startTrainingBtn.className = 'w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50';
+                els.startTrainingBtn.textContent = '开始云端训练';
+                els.saveDatasetBtn.textContent = '上传 (Upload)';
+                els.toggleInferenceBtn.textContent = state.isInferencing ? '停止推理' : '启动云端推理';
+                els.trainingHeader.textContent = 'ACT 云端训练';
+                els.cloudModelDisplay.classList.remove('hidden');
+                
+                // Fetch cloud data
+                fetchCloudData();
+                els.modelSelect.classList.add('hidden'); // Hide frontend model select
+            }
+        }
+        
+        els.modeFrontendBtn.onclick = () => setTrainingMode('frontend');
+        els.modeCloudBtn.onclick = () => setTrainingMode('cloud');
+
+        // --- Cloud Data Handling ---
+        async function fetchCloudData() {
+            const datasets = await cloudService.fetchDatasets();
+            state.cloudDatasets = datasets;
+            els.cloudDatasetSelect.innerHTML = '<option value="">-- Select Dataset --</option>';
+            datasets.forEach(ds => {
+                const opt = document.createElement('option');
+                opt.value = ds.path;
+                opt.text = `${ds.id} (${(ds.size_bytes/1024).toFixed(1)} KB)`;
+                els.cloudDatasetSelect.appendChild(opt);
+            });
+
+            const models = await cloudService.fetchModels();
+            state.cloudModels = models;
+            els.cloudModelSelect.innerHTML = '<option value="">-- Select Model --</option>';
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.text = m.id;
+                els.cloudModelSelect.appendChild(opt);
+            });
+        }
+
+        els.refreshCloudDatasetsBtn.onclick = async () => {
+            const datasets = await cloudService.fetchDatasets();
+            state.cloudDatasets = datasets;
+            els.cloudDatasetSelect.innerHTML = '<option value="">-- Select Dataset --</option>';
+            datasets.forEach(ds => {
+                const opt = document.createElement('option');
+                opt.value = ds.path;
+                opt.text = `${ds.id} (${(ds.size_bytes/1024).toFixed(1)} KB)`;
+                els.cloudDatasetSelect.appendChild(opt);
+            });
+        };
+
+        els.refreshCloudModelsBtn.onclick = async () => {
+             const models = await cloudService.fetchModels();
+            state.cloudModels = models;
+            els.cloudModelSelect.innerHTML = '<option value="">-- Select Model --</option>';
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.text = m.id;
+                els.cloudModelSelect.appendChild(opt);
+            });
+        };
+
+        els.cloudDatasetSelect.onchange = (e) => state.selectedCloudDataset = e.target.value;
+        els.cloudModelSelect.onchange = (e) => {
+            state.selectedCloudModel = e.target.value;
+            els.currentCloudModelName.textContent = e.target.value || '未选择';
+        };
+
+        // --- Logging ---
+        function addLog(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log-entry log-${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            els.logContainer.appendChild(div);
+            els.logContainer.scrollTop = els.logContainer.scrollHeight;
+        }
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a24);
+        scene.fog = new THREE.Fog(0x1a1a24, 10, 50);
+
+        const camera = new THREE.PerspectiveCamera(60, els.container.clientWidth / els.container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 12, 12);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(els.container.clientWidth, els.container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        els.container.appendChild(renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // Floor
+        const planeGeo = new THREE.PlaneGeometry(40, 40);
+        const planeMat = new THREE.MeshStandardMaterial({ color: 0x2a2a34, roughness: 0.8 });
+        const plane = new THREE.Mesh(planeGeo, planeMat);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // Robot
+        const robotGroup = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 1.8), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
+        body.position.y = 0.4;
+        body.castShadow = true;
+        robotGroup.add(body);
+        
+        // Wheels
+        const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 32);
+        const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+        [-0.7, 0.7].forEach(x => {
+            const w = new THREE.Mesh(wheelGeo, wheelMat);
+            w.rotation.z = Math.PI/2;
+            w.position.set(x, 0.3, 0);
+            robotGroup.add(w);
+        });
+
+        // Camera Head
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+        head.position.set(0, 0.8, 0.6);
+        robotGroup.add(head);
+        
+        scene.add(robotGroup);
+
+        // Onboard Camera
+        const onboardCamera = new THREE.PerspectiveCamera(80, 320/240, 0.1, 50);
+        const onboardRenderTarget = new THREE.WebGLRenderTarget(320, 240);
+        const smallCanvas = document.createElement('canvas');
+        smallCanvas.width = 64;
+        smallCanvas.height = 64;
+
+        // Environment Group
+        const envGroup = new THREE.Group();
+        scene.add(envGroup);
+
+        // --- Texture Generation ---
+        const createTexture = (type) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            if (type === 'wood') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(0, 0, 512, 512);
+                for(let i=0; i<200; i++) {
+                    ctx.fillStyle = `rgba(60, 30, 10, ${Math.random()*0.15})`;
+                    ctx.fillRect(0, Math.random()*512, 512, Math.random()*10);
+                }
+            } else if (type === 'tile') {
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 4;
+                for(let i=0; i<=512; i+=64) {
+                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+                }
+            } else if (type === 'tennis') {
+                ctx.fillStyle = '#1e5631';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(64, 32, 384, 448);
+                ctx.beginPath(); ctx.moveTo(100, 32); ctx.lineTo(100, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(412, 32); ctx.lineTo(412, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 128); ctx.lineTo(412, 128); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 384); ctx.lineTo(412, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 128); ctx.lineTo(256, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 32); ctx.lineTo(256, 40); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 480); ctx.lineTo(256, 472); ctx.stroke();
+                ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.moveTo(64, 256); ctx.lineTo(448, 256); ctx.stroke();
+            } else if (type === 'wall') {
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, 0, 512, 512);
+                for(let i=0; i<500; i++) {
+                    ctx.fillStyle = `rgba(0,0,0,${Math.random()*0.03})`;
+                    ctx.beginPath();
+                    ctx.arc(Math.random()*512, Math.random()*512, Math.random()*2, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            if (type !== 'tennis') tex.repeat.set(4, 4); // Default repeat
+            return tex;
+        };
+
+        const textures = {
+            wood: createTexture('wood'),
+            tile: createTexture('tile'),
+            tennis: createTexture('tennis'),
+            wall: createTexture('wall')
+        };
+
+        // --- Scene Logic ---
+        function updateScene() {
+            // Clear old
+            while(envGroup.children.length > 0) envGroup.remove(envGroup.children[0]);
+            state.walls = [];
+            
+            const sceneType = els.sceneType.value;
+            const sceneSize = els.sceneSize.value;
+            const sceneComplexity = els.sceneComplexity.value;
+
+            let sizeVal = 20;
+            if (sceneSize === 'small') sizeVal = 10;
+            if (sceneSize === 'large') sizeVal = 30;
+            
+            const halfSize = sizeVal / 2;
+            
+            // Update Floor
+            if (sceneType === 'living_room') {
+                planeMat.map = textures.wood;
+                planeMat.color.setHex(0xffffff);
+                textures.wood.repeat.set(sizeVal/5, sizeVal/5);
+            } else if (sceneType === 'classroom') {
+                planeMat.map = textures.tile;
+                planeMat.color.setHex(0xffffff);
+                textures.tile.repeat.set(sizeVal/5, sizeVal/5);
+            } else if (sceneType === 'tennis_court') {
+                planeMat.map = textures.tennis;
+                planeMat.color.setHex(0xffffff);
+            } else {
+                planeMat.map = null;
+                planeMat.color.setHex(0x2a2a34);
+            }
+            planeMat.needsUpdate = true;
+
+            const wallMat = new THREE.MeshStandardMaterial({ map: textures.wall, color: 0xd1d5db, roughness: 0.9 });
+            textures.wall.repeat.set(1, 1);
+
+            // Walls helper
+            const addWall = (x, z, w, h, d, color, map) => {
+                const mat = color ? new THREE.MeshStandardMaterial({ color, map: map || null }) : wallMat;
+                const geo = new THREE.BoxGeometry(w, h, d);
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(x, h/2, z);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                mesh.userData = { w, d };
+                envGroup.add(mesh);
+                state.walls.push(mesh);
+            };
+
+            // Boundaries
+            if (sceneType !== 'tennis_court') {
+                addWall(0, -halfSize, sizeVal, 2, 0.5);
+                addWall(0, halfSize, sizeVal, 2, 0.5);
+                addWall(-halfSize, 0, 0.5, 2, sizeVal);
+                addWall(halfSize, 0, 0.5, 2, sizeVal);
+            } else {
+                addWall(0, -30, 60, 2, 0.5);
+                addWall(0, 30, 60, 2, 0.5);
+                addWall(-30, 0, 0.5, 2, 60);
+                addWall(30, 0, 0.5, 2, 60);
+            }
+
+            let numObstacles = 2;
+            if (sceneComplexity === 'medium') numObstacles = 5;
+            if (sceneComplexity === 'high') numObstacles = 12;
+
+            // Obstacles
+            if (sceneType === 'basic') {
+                for(let i=0; i<numObstacles; i++) {
+                    const w = 1 + Math.random() * 2;
+                    const d = 1 + Math.random() * 2;
+                    const x = (Math.random() - 0.5) * (sizeVal - 4);
+                    const z = (Math.random() - 0.5) * (sizeVal - 4);
+                    if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                    addWall(x, z, w, 1.5, d, 0x64748b);
+                }
+            } else if (sceneType === 'living_room') {
+                addWall(0, -halfSize + 2, 4, 1, 1.5, 0x334155);
+                addWall(0, -halfSize + 1.2, 4, 2, 0.5, 0x334155);
+                addWall(0, halfSize - 1, 3, 0.8, 1, 0x8b5cf6);
+                addWall(0, -halfSize + 4, 2, 0.5, 1.5, 0xffffff, textures.wood);
+                
+                for(let i=0; i<numObstacles - 3; i++) {
+                    const w = 0.8 + Math.random() * 1;
+                    const d = 0.8 + Math.random() * 1;
+                    const x = (Math.random() - 0.5) * (sizeVal - 4);
+                    const z = (Math.random() - 0.5) * (sizeVal - 4);
+                    if (Math.abs(x) < 3 && Math.abs(z) < 3) continue;
+                    addWall(x, z, w, 1 + Math.random(), d, 0x475569);
+                }
+            } else if (sceneType === 'classroom') {
+                const rows = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+                const cols = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+                for(let r=0; r<rows; r++) {
+                    for(let c=0; c<cols; c++) {
+                        const x = -halfSize/2 + 2 + c * 3;
+                        const z = -halfSize/2 + 2 + r * 3;
+                        if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                        addWall(x, z, 1.5, 0.8, 1, 0xffffff, textures.wood);
+                    }
+                }
+                addWall(0, halfSize - 2, 3, 1, 1.5, 0xffffff, textures.wood);
+            } else if (sceneType === 'tennis_court') {
+                const netMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, wireframe: true });
+                const netGeo = new THREE.BoxGeometry(60, 1, 0.5);
+                const net = new THREE.Mesh(netGeo, netMat);
+                net.position.set(0, 0.5, 0);
+                envGroup.add(net);
+            }
+
+            // Target
+            if (state.target) envGroup.remove(state.target);
+            const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
+            const target = new THREE.Mesh(targetGeo, targetMat);
+            target.position.set(halfSize/2 - 1, 0.4, halfSize/2 - 1);
+            target.castShadow = true;
+            target.userData = { w: 0.8, d: 0.8 };
+            envGroup.add(target);
+            state.target = target;
+            
+            // Ball (Obstacle)
+            const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
+            const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
+            const ball = new THREE.Mesh(ballGeo, ballMat);
+            ball.position.set(-halfSize/2 + 1.5, 0.25, halfSize/2 - 1.5);
+            ball.castShadow = true;
+            ball.userData = { w: 0.5, d: 0.5 };
+            envGroup.add(ball);
+            state.walls.push(ball);
+
+            addLog(`Scene updated: ${sceneType}, ${sceneSize}, ${sceneComplexity}`);
+        }
+        updateScene();
+
+        // Listeners for scene changes
+        els.sceneType.onchange = (e) => { e.target.blur(); updateScene(); };
+        els.sceneSize.onchange = (e) => { e.target.blur(); updateScene(); };
+        els.sceneComplexity.onchange = (e) => { e.target.blur(); updateScene(); };
+
+        // Light Controls
+        const updateLight = () => {
+            dirLight.position.set(
+                Number(els.lightX.value),
+                Number(els.lightY.value),
+                Number(els.lightZ.value)
+            );
+        };
+        els.lightX.oninput = updateLight;
+        els.lightY.oninput = updateLight;
+        els.lightZ.oninput = updateLight;
+
+        // --- Controls ---
+        document.addEventListener('keydown', e => {
+            const k = e.key.toLowerCase();
+            state.keys[k] = true;
+            if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) {
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('keyup', e => state.keys[e.key.toLowerCase()] = false);
+        
+        ['w','a','s','d'].forEach(key => {
+            const btn = document.getElementById(`btn${key.toUpperCase()}`);
+            if(btn) {
+                btn.addEventListener('mousedown', (e) => { e.preventDefault(); state.keys[key] = true; });
+                btn.addEventListener('mouseup', (e) => { e.preventDefault(); state.keys[key] = false; });
+                btn.addEventListener('mouseleave', (e) => { e.preventDefault(); state.keys[key] = false; });
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); state.keys[key] = true; });
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[key] = false; });
+            }
+        });
+
+        document.getElementById('resetRobotBtn').onclick = () => {
+            state.robot.x = 0;
+            state.robot.z = 0;
+            state.robot.rotation = 0;
+            state.robot.velocity = 0;
+            state.robot.angularVelocity = 0;
+            robotGroup.position.set(0,0,0);
+            robotGroup.rotation.y = 0;
+            addLog('Robot reset', 'warning');
+        };
+
+        // --- Physics & Update Loop ---
+        function update() {
+            // Movement
+            if (!state.isInferencing && !state.isTraining) {
+                let v = 0, w = 0;
+                if (state.keys['w'] || state.keys['arrowup']) v += Number(els.speedRange.value);
+                if (state.keys['s'] || state.keys['arrowdown']) v -= Number(els.speedRange.value);
+                if (state.keys['a'] || state.keys['arrowleft']) w += Number(els.turnSpeedRange.value);
+                if (state.keys['d'] || state.keys['arrowright']) w -= Number(els.turnSpeedRange.value);
+                state.robot.velocity = v;
+                state.robot.angularVelocity = w;
+                
+                els.speedVal.textContent = Number(els.speedRange.value).toFixed(2);
+                els.turnSpeedVal.textContent = Number(els.turnSpeedRange.value).toFixed(2);
+            }
+
+            // Physics
+            const s = state.robot;
+            const nextX = s.x + Math.sin(s.rotation) * s.velocity;
+            const nextZ = s.z + Math.cos(s.rotation) * s.velocity;
+            
+            let collided = false;
+            const checkCollision = (objX, objZ, w, d) => {
+                return (nextX > objX - w/2 - 0.9 && nextX < objX + w/2 + 0.9 &&
+                        nextZ > objZ - d/2 - 0.9 && nextZ < objZ + d/2 + 0.9);
+            };
+
+            state.walls.forEach(wall => {
+                if(checkCollision(wall.position.x, wall.position.z, wall.userData.w, wall.userData.d)) collided = true;
+            });
+            if(state.target && checkCollision(state.target.position.x, state.target.position.z, 0.8, 0.8)) collided = true;
+
+            state.isColliding = collided;
+
+            if(!collided) {
+                s.x = nextX;
+                s.z = nextZ;
+            } else {
+                s.velocity = 0;
+            }
+            s.rotation += s.angularVelocity;
+            s.velocity *= 0.9;
+            s.angularVelocity *= 0.9;
+
+            // Apply to Mesh
+            robotGroup.position.set(s.x, 0, s.z);
+            robotGroup.rotation.y = s.rotation;
+
+            // Camera Follow
+            camera.position.set(s.x, 12, s.z + 12);
+            camera.lookAt(s.x, 0, s.z);
+
+            // Onboard Camera Render
+            const dirX = Math.sin(s.rotation);
+            const dirZ = Math.cos(s.rotation);
+            onboardCamera.position.set(s.x + dirX*0.9, 0.7, s.z + dirZ*0.9);
+            onboardCamera.lookAt(s.x + dirX*10, 0.7, s.z + dirZ*10);
+            
+            renderer.setRenderTarget(onboardRenderTarget);
+            renderer.render(scene, onboardCamera);
+            renderer.setRenderTarget(null);
+
+            // Copy to UI Canvas
+            const ctx = els.cameraCanvas.getContext('2d');
+            const pixels = new Uint8Array(320*240*4);
+            renderer.readRenderTargetPixels(onboardRenderTarget, 0, 0, 320, 240, pixels);
+            
+            const imgData = ctx.createImageData(320, 240);
+            for (let y = 0; y < 240; y++) {
+                for (let x = 0; x < 320; x++) {
+                    const srcIdx = ((239 - y) * 320 + x) * 4;
+                    const dstIdx = (y * 320 + x) * 4;
+                    imgData.data[dstIdx] = pixels[srcIdx];
+                    imgData.data[dstIdx+1] = pixels[srcIdx+1];
+                    imgData.data[dstIdx+2] = pixels[srcIdx+2];
+                    imgData.data[dstIdx+3] = 255;
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+
+            // UI Updates
+            els.posX.textContent = s.x.toFixed(2);
+            els.posZ.textContent = s.z.toFixed(2);
+            els.rotY.textContent = (s.rotation * 180/Math.PI).toFixed(0) + '°';
+            els.vel.textContent = (Math.abs(s.velocity)*10).toFixed(1);
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(update);
+        }
+        requestAnimationFrame(update);
+
+        // --- Data Collection ---
+        let recordInterval;
+        
+        function captureFrame() {
+            // Small canvas for model
+            const ctx = smallCanvas.getContext('2d');
+            ctx.drawImage(els.cameraCanvas, 0, 0, 64, 64);
+            
+            // Collision Protection
+            if (state.config.collisionProtection && state.isColliding) {
+                if (state.isRecording) {
+                    toggleRecording();
+                    // Discard last few frames
+                    if (state.currentEpisode.length < 10) {
+                        state.currentEpisode = [];
+                        addLog('Collision detected! Discarding short episode.', 'warning');
+                    } else {
+                        addLog('Collision detected! Stopping recording.', 'warning');
+                    }
+                }
+                return;
+            }
+
+            // Record
+            if (state.isRecording) {
+                // Action: [v, -v, w, -w, stop]
+                const action = [0, 0, 0, 0, 0];
+                if (state.keys['w']) action[0] = 1;
+                else if (state.keys['s']) action[1] = 1;
+                else if (state.keys['a']) action[2] = 1;
+                else if (state.keys['d']) action[3] = 1;
+                else action[4] = 1; // Stop
+
+                const targetDist = state.target ? Math.sqrt(Math.pow(state.target.position.x - state.robot.x, 2) + Math.pow(state.target.position.z - state.robot.z, 2)) : 0;
+
+                const frame = {
+                    image: tf.browser.fromPixels(smallCanvas).arraySync(),
+                    imageBase64: smallCanvas.toDataURL('image/jpeg', 0.7),
+                    state: [
+                        state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
+                        targetDist,
+                        state.isColliding ? 1 : 0, 
+                        0, 0, 0, 0, 0, 0, 0, 0 // Padding to 14
+                    ],
+                    action: action
+                };
+                state.currentEpisode.push(frame);
+                
+                els.frameCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0) + state.currentEpisode.length;
+                els.actionCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0) + state.currentEpisode.length;
+            }
+        }
+
+        function toggleRecording() {
+            state.isRecording = !state.isRecording;
+            if (state.isRecording) {
+                state.currentEpisode = [];
+                recordInterval = setInterval(captureFrame, 100); // 10Hz
+                els.toggleRecordBtn.className = 'flex-1 bg-red-600/40 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2';
+                els.recordBtnText.textContent = '停止采集';
+                els.recordBtnDot.className = 'w-2 h-2 rounded-full bg-red-500 recording-pulse';
+                els.recordingIndicator.className = 'w-2 h-2 rounded-full bg-red-500 recording-pulse opacity-100';
+                addLog('Recording started...', 'info');
+            } else {
+                clearInterval(recordInterval);
+                if (state.currentEpisode.length > 0) {
+                    state.episodes.push(state.currentEpisode);
+                    els.episodesCount.textContent = state.episodes.length;
+                    addLog(`Episode saved: ${state.currentEpisode.length} frames`, 'success');
+                }
+                els.toggleRecordBtn.className = 'flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2';
+                els.recordBtnText.textContent = '开始采集';
+                els.recordBtnDot.className = 'w-2 h-2 rounded-full bg-red-500';
+                els.recordingIndicator.className = 'w-2 h-2 rounded-full bg-red-500 opacity-30';
+                els.saveDatasetBtn.disabled = false;
+            }
+        }
+        els.toggleRecordBtn.onclick = toggleRecording;
+        els.collisionProtection.onchange = (e) => state.config.collisionProtection = e.target.checked;
+
+        els.saveDatasetBtn.onclick = async () => {
+            if (state.trainingMode === 'cloud') {
+                if (state.episodes.length === 0) return;
+                addLog('Packing dataset for cloud upload...', 'info');
+                const dataset = actService.packDataset(state.episodes);
+                addLog(`Uploading dataset (${dataset.states.length} chunks)...`, 'info');
+                const success = await cloudService.saveDataset(dataset);
+                if (success) {
+                    addLog('Dataset uploaded successfully!', 'success');
+                    fetchCloudData(); // Refresh lists
+                } else {
+                    addLog('Upload failed.', 'error');
+                }
+            } else {
+                const blob = new Blob([JSON.stringify(state.episodes)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `act_dataset_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+                a.click();
+                addLog('Dataset saved locally.', 'success');
+            }
+        };
+
+        document.getElementById('importDatasetInput').onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    state.episodes = data;
+                    els.episodesCount.textContent = state.episodes.length;
+                    els.frameCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0);
+                    els.actionCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0);
+                    els.saveDatasetBtn.disabled = false;
+                    addLog(`Imported ${state.episodes.length} episodes.`, 'success');
+                } catch (err) {
+                    addLog('Failed to import dataset.', 'error');
+                }
+            };
+            reader.readAsText(file);
+        };
+
+        // --- Training ---
+        async function startTraining() {
+            state.isTraining = true;
+            els.startTrainingBtn.disabled = true;
+            els.trainingProgressContainer.classList.remove('hidden');
+            
+            if (state.trainingMode === 'cloud') {
+                if (!state.selectedCloudDataset) {
+                    addLog('Please select a cloud dataset first.', 'error');
+                    state.isTraining = false;
+                    els.startTrainingBtn.disabled = false;
+                    return;
+                }
+                
+                addLog(`Starting Cloud Training on ${state.selectedCloudDataset}...`, 'info');
+                const started = await cloudService.startTraining(state.selectedCloudDataset);
+                if (!started) {
+                    addLog('Failed to start cloud training.', 'error');
+                    state.isTraining = false;
+                    els.startTrainingBtn.disabled = false;
+                    return;
+                }
+
+                // Poll status
+                const pollInterval = setInterval(async () => {
+                    const status = await cloudService.getTrainingStatus();
+                    if (status) {
+                        const progress = (status.epoch / status.total_epochs) * 100;
+                        els.trainingBar.style.width = `${progress}%`;
+                        els.trainingPercent.textContent = `${Math.floor(progress)}%`;
+                        els.trainingStatusText.textContent = `Epoch ${status.epoch}/${status.total_epochs} - Loss: ${status.loss.toFixed(4)}`;
+                        
+                        if (status.status === 'completed') {
+                            clearInterval(pollInterval);
+                            state.isTraining = false;
+                            els.startTrainingBtn.disabled = false;
+                            addLog('Cloud Training Completed!', 'success');
+                            fetchCloudData(); // Refresh models
+                        } else if (status.status === 'failed') {
+                            clearInterval(pollInterval);
+                            state.isTraining = false;
+                            els.startTrainingBtn.disabled = false;
+                            addLog('Cloud Training Failed.', 'error');
+                        }
+                    }
+                }, 1000);
+
+            } else {
+                addLog('Preparing Frontend Training Data...', 'info');
+                const data = actService.prepareTrainingData(state.episodes);
+                
+                addLog('Building Model...', 'info');
+                state.model = actService.createModel();
+                
+                addLog('Training Started...', 'info');
+                await actService.trainModel(state.model, data, (epoch, logs) => {
+                    const progress = ((epoch + 1) / 50) * 100;
+                    els.trainingBar.style.width = `${progress}%`;
+                    els.trainingPercent.textContent = `${Math.floor(progress)}%`;
+                    els.trainingStatusText.textContent = `Epoch ${epoch + 1}/50 - Loss: ${logs.loss.toFixed(4)}`;
+                });
+                
+                state.isTraining = false;
+                els.startTrainingBtn.disabled = false;
+                addLog('Frontend Training Completed!', 'success');
+                
+                // Update model select
+                const opt = document.createElement('option');
+                opt.text = 'ACT_Model_v1 (Ready)';
+                opt.value = 'v1';
+                els.modelSelect.appendChild(opt);
+                els.modelSelect.value = 'v1';
+            }
+        }
+        els.startTrainingBtn.onclick = startTraining;
+
+        // --- Visualization ---
+        function updateActionChunkViz(actions) {
+            els.actionChunkViz.innerHTML = '';
+            const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308', '#64748b']; // Red, Green, Blue, Yellow, Gray
+            
+            actions.forEach((act, i) => {
+                const bar = document.createElement('div');
+                bar.className = 'w-2 mx-0.5 rounded transition-all';
+                bar.style.backgroundColor = colors[act] || '#cbd5e1';
+                bar.style.height = `${Math.random() * 20 + 10}px`; // Dynamic height
+                els.actionChunkViz.appendChild(bar);
+            });
+        }
+
+        // --- Inference ---
+        let inferenceInterval;
+        
+        async function runInference() {
+            if (!state.isInferencing) return;
+
+            // Capture state
+            const targetDist = state.target ? Math.sqrt(Math.pow(state.target.position.x - state.robot.x, 2) + Math.pow(state.target.position.z - state.robot.z, 2)) : 0;
+            const currentState = [
+                state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
+                targetDist,
+                state.isColliding ? 1 : 0, 
+                0, 0, 0, 0, 0, 0, 0, 0 // Padding
+            ];
+
+            // Stuck Recovery
+            if (Math.abs(state.robot.x - state.lastX) < 0.01 && Math.abs(state.robot.z - state.lastZ) < 0.01) {
+                state.stuckCounter++;
+            } else {
+                state.stuckCounter = 0;
+            }
+            state.lastX = state.robot.x;
+            state.lastZ = state.robot.z;
+
+            if (state.stuckCounter > 20) { // 2 seconds stuck
+                addLog('Stuck detected! Recovering...', 'warning');
+                state.robot.velocity = -0.2;
+                state.robot.angularVelocity = 0.1;
+                setTimeout(runInference, 100);
+                return;
+            }
+
+            if (state.trainingMode === 'cloud') {
+                const envState = [
+                    state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
+                    state.isColliding ? 1 : 0, 0, currentState[4] // targetDist
+                ];
+                
+                const action = await cloudService.runInferenceStep(currentState, envState);
+                
+                if (action) {
+                    let v = 0, w = 0;
+                    if (Array.isArray(action)) {
+                        if (action.length === 5) { // One-hot
+                            if(action[0]) v = 0.1;
+                            else if(action[1]) v = -0.1;
+                            else if(action[2]) w = 0.05;
+                            else if(action[3]) w = -0.05;
+                        } else if (action.length === 2) { // [v, w]
+                            v = action[0];
+                            w = action[1];
+                        }
+                    } else if (typeof action === 'string') {
+                        const cmd = action.toLowerCase();
+                        if(cmd === 'w' || cmd === 'up') v = 0.1;
+                        else if(cmd === 's' || cmd === 'down') v = -0.1;
+                        else if(cmd === 'a' || cmd === 'left') w = 0.05;
+                        else if(cmd === 'd' || cmd === 'right') w = -0.05;
+                    }
+                    
+                    // Low-pass filter
+                    state.robot.velocity = state.robot.velocity * 0.5 + v * 0.5;
+                    state.robot.angularVelocity = state.robot.angularVelocity * 0.5 + w * 0.5;
+                    
+                    // Update Viz
+                    updateActionChunkViz([0, 1, 2, 3, 4].map(i => Math.floor(Math.random()*5))); // Fake viz for cloud
+                }
+                
+                setTimeout(runInference, 200); // Slower for cloud
+
+            } else {
+                // Frontend Inference
+                const image = tf.browser.fromPixels(smallCanvas).arraySync();
+                const prediction = actService.predict(state.model, image, currentState);
+                
+                // Temporal Ensembling (Simplified)
+                if (!state.actionBuffer) state.actionBuffer = [];
+                
+                const newChunk = [];
+                for(let i=0; i<actService.CHUNK_SIZE; i++) {
+                    newChunk.push({
+                        v: prediction[i*2],
+                        w: prediction[i*2+1],
+                        weight: Math.exp(-0.5 * i)
+                    });
+                }
+                state.actionBuffer.push(newChunk);
+                if (state.actionBuffer.length > actService.CHUNK_SIZE) state.actionBuffer.shift();
+                
+                let sumV = 0, sumW = 0, totalWeight = 0;
+                state.actionBuffer.forEach((chunk, index) => {
+                    const offset = state.actionBuffer.length - 1 - index;
+                    if (offset < chunk.length) {
+                        const act = chunk[offset];
+                        sumV += act.v * act.weight;
+                        sumW += act.w * act.weight;
+                        totalWeight += act.weight;
+                    }
+                });
+                
+                if (totalWeight > 0) {
+                    const targetV = sumV / totalWeight;
+                    const targetW = sumW / totalWeight;
+                    state.robot.velocity = state.robot.velocity * 0.5 + targetV * 0.5;
+                    state.robot.angularVelocity = state.robot.angularVelocity * 0.5 + targetW * 0.5;
+                }
+
+                // Update Viz
+                // Map prediction to discrete actions for viz colors
+                const vizChunks = [];
+                for(let i=0; i<5; i++) { // Show first 5 steps
+                    const v = prediction[i*2];
+                    const w = prediction[i*2+1];
+                    let actIdx = 4; // Stop
+                    if (v > 0.05) actIdx = 1;
+                    else if (v < -0.05) actIdx = 2;
+                    else if (w > 0.02) actIdx = 3;
+                    else if (w < -0.02) actIdx = 0; // Fix mapping if needed
+                    vizChunks.push(actIdx);
+                }
+                updateActionChunkViz(vizChunks);
+
+                setTimeout(runInference, 100);
+            }
+        }
+
+        function updateActionChunkViz(chunks) {
+            const colors = ['bg-slate-700', 'bg-blue-500', 'bg-blue-400', 'bg-purple-500', 'bg-purple-400'];
+            els.actionChunkViz.innerHTML = '';
+            chunks.forEach((act, idx) => {
+                const div = document.createElement('div');
+                div.className = `flex-1 ${colors[act] || 'bg-slate-700'} rounded-t transition-all duration-300`;
+                div.style.height = `${20 + Math.random() * 60}%`;
+                div.style.opacity = 1 - (idx * 0.1);
+                els.actionChunkViz.appendChild(div);
+            });
+        }
+
+        els.toggleInferenceBtn.onclick = async () => {
+            if (state.isInferencing) {
+                state.isInferencing = false;
+                if (state.trainingMode === 'cloud') {
+                    await cloudService.stopInference();
+                }
+                els.toggleInferenceBtn.textContent = state.trainingMode === 'cloud' ? '启动云端推理' : '启动自主推理';
+                els.toggleInferenceBtn.className = 'w-full bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50';
+                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-slate-300 border-slate-700';
+                els.statusBadge.textContent = '手动控制模式';
+                addLog('Inference stopped.', 'info');
+            } else {
+                if (state.trainingMode === 'cloud') {
+                    if (!state.selectedCloudModel) {
+                        addLog('Please select a cloud model first.', 'error');
+                        return;
+                    }
+                    const started = await cloudService.startInference(state.selectedCloudModel);
+                    if (!started) {
+                        addLog('Failed to start cloud inference.', 'error');
+                        return;
+                    }
+                } else {
+                    if (!state.model) {
+                        addLog('No frontend model trained!', 'error');
+                        return;
+                    }
+                }
+                
+                state.isInferencing = true;
+                els.toggleInferenceBtn.textContent = '停止推理';
+                els.toggleInferenceBtn.className = 'w-full bg-red-600/20 text-red-400 border-red-500/30 hover:bg-red-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50';
+                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-purple-400 border-purple-500/30 recording-pulse';
+                els.statusBadge.textContent = 'ACT 自主推理中';
+                addLog('Inference started...', 'success');
+                runInference();
+            }
+        };
+
+        // Attention Heatmap Toggle
+        els.showAttention.onchange = (e) => {
+            els.attentionHeatmap.style.opacity = e.target.checked ? '1' : '0';
+        };
+
+        // --- Window Resize ---
+        window.addEventListener('resize', () => {
+            if (els.container) {
+                camera.aspect = els.container.clientWidth / els.container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(els.container.clientWidth, els.container.clientHeight);
+            }
+        });
+
+        // --- Mobile Touch Controls ---
+        ['w','a','s','d'].forEach(key => {
+            const btn = document.getElementById(`btn${key.toUpperCase()}`);
+            if (btn) {
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); state.keys[key] = true; });
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[key] = false; });
+            }
+        });
+
+        // --- Initialization ---
+        setTrainingMode('frontend');
+        addLog('System initialized. Ready.', 'info');
+    </script>
+</body>
+</html>
+
