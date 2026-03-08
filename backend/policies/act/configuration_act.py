@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
-from src.configs.types import PolicyFeature, FeatureType
-from src.utils.constants import OBS_STATE, ACTION
+from backend.configs.types import PolicyFeature, FeatureType
+from backend.utils.constants import OBS_STATE, ACTION
 
 
 @dataclass

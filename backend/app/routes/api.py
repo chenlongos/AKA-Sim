@@ -16,14 +16,14 @@ import time
 import torch
 
 from flask import Blueprint, request, jsonify
-from src.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION, OBS_IMAGE, OBS_IMAGES, REWARD, DONE, TRUNCATED, OBS_LANGUAGE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ROBOTS, TELEOPERATORS
-from src.sim.model.car import car
-from src.train import train_from_dataset, build_config
-from src.policies.act.modeling_act import ACT
+from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION, OBS_IMAGE, OBS_IMAGES, REWARD, DONE, TRUNCATED, OBS_LANGUAGE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ROBOTS, TELEOPERATORS
+from backend.sim.model.car import car
+from backend.train import train_from_dataset, build_config
+from backend.policies.act.modeling_act import ACT
 from ..extensions import socketio
 
 api_bp = Blueprint("api", __name__)
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_DIR = ROOT_DIR / "output"
 DATASET_DIR = OUTPUT_DIR / "datasets"
 MODEL_DIR = OUTPUT_DIR / "train"

@@ -2,13 +2,13 @@ import math
 import os
 import torch
 
-from src.sim.model.car import car
+from backend.sim.model.car import car
 from ..extensions import socketio
 from flask_socketio import emit
-from src.policies.act.configuration_act import ACTConfig
-from src.policies.act.modeling_act import ACT
-from src.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
-from src.configs.types import PolicyFeature, FeatureType
+from backend.policies.act.configuration_act import ACTConfig
+from backend.policies.act.modeling_act import ACT
+from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
+from backend.configs.types import PolicyFeature, FeatureType
 
 _act_model = None
 _act_device = None

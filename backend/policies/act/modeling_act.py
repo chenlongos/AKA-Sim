@@ -11,8 +11,8 @@ from torch import Tensor, nn
 from itertools import chain
 from collections.abc import Callable
 
-from src.policies.act.configuration_act import ACTConfig
-from src.utils.constants import OBS_IMAGES, OBS_STATE, ACTION, OBS_ENV_STATE
+from backend.policies.act.configuration_act import ACTConfig
+from backend.utils.constants import OBS_IMAGES, OBS_STATE, ACTION, OBS_ENV_STATE
 
 
 class ACT(nn.Module):

@@ -6,10 +6,10 @@ from typing import Callable
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from src.policies.act.configuration_act import ACTConfig
-from src.policies.act.modeling_act import ACT
-from src.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
-from src.configs.types import PolicyFeature, FeatureType
+from backend.policies.act.configuration_act import ACTConfig
+from backend.policies.act.modeling_act import ACT
+from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
+from backend.configs.types import PolicyFeature, FeatureType
 
 import torch
 import torch.nn.functional as F
