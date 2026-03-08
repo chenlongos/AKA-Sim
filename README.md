@@ -1,6 +1,6 @@
 # AKA-Sim 阿卡0号开源机器人
 
-AKA-00 是一个功能完整的开源机器人项目，支持实体机器人控制、模拟环境训练和 ACT (Action Chunking Transformer) 策略学习。
+AKA-Sim 是一个功能完整的开源机器人项目，支持实体机器人控制、模拟环境训练和 ACT (Action Chunking Transformer) 策略学习。
 
 ## 功能特性
 
@@ -64,14 +64,9 @@ pip install -r requirements.txt
 python run.py
 ```
 
-后端启动后，在浏览器中打开前端页面：
-
-```
-http://localhost/main.html
-```
+后端启动后，将main.html拖到浏览器中打开前端页面：
 
 服务启动后访问：
-- http://localhost/main.html - 主控制界面
 - http://localhost/sim - 模拟器
 
 ## API 接口
@@ -91,20 +86,6 @@ http://localhost/main.html
 | `/api/infer/step` | POST | 推理步进 |
 | `/api/infer/stop` | POST | 停止推理 |
 | `/ws` | WebSocket | 实时通信 |
-
-## 硬件支持
-
-- **开发板**: OPI5P (SG2002)
-- **舵机**: STS3215, MG996R, ZL, ZP10S
-- **摄像头**: OpenCV 支持的 USB 摄像头
-
-## 文档
-
-更多详细信息请参阅 [docs/](docs/) 目录：
-
-- [快速开始](docs/src/start.md) - 项目启动指南
-- [初始化配置](docs/src/init.md) - 硬件和网络配置
-- [开发文档](docs/dev/) - 开发相关文档
 
 ## 相关链接
 
