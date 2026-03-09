@@ -4,6 +4,7 @@ import base64
 import sys
 import threading
 import shutil
+import requests
 from pathlib import Path
 try:
     import fcntl
@@ -591,3 +592,47 @@ def infer_stop():
             }
         )
     return jsonify({"status": "stopped"})
+
+
+@api_bp.route("/control")
+def control():
+    """向指定IP发送控制指令"""
+    action = request.args.get("action", "stop")
+    speed = request.args.get("speed", "50")
+    time_sec = request.args.get("time", "0")
+    target_ip = request.args.get("target_ip")
+
+    if not target_ip:
+        # 如果没有指定IP，返回本机IP
+        return jsonify({"error": "missing target_ip"}), 400
+
+    try:
+        target_url = f"http://{target_ip}/api/control"
+        params = {
+            "action": action,
+            "speed": speed,
+            "time": time_sec,
+        }
+        resp = requests.get(target_url, params=params, timeout=5)
+        return jsonify({"status": "ok", "response": resp.text})
+    except requests.exceptions.Timeout:
+        return jsonify({"error": f"timeout: cannot reach {target_ip}"}), 504
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": f"connection failed: cannot reach {target_ip}"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/ip")
+def get_ip():
+    """获取本机IP地址"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # 连接到一个外部IP（不实际发送数据）
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = "127.0.0.1"
+    finally:
+        s.close()
+    return jsonify({"ip": local_ip})

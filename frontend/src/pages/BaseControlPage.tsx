@@ -9,6 +9,7 @@ const BaseControlPage = () => {
     const [ip, setIp] = useState("获取中...");
     const [status, setStatus] = useState("准备就绪");
     const [isSimulator, setIsSimulator] = useState(false);
+    const [targetIp, setTargetIp] = useState("");
 
     // 当前正在执行的动作（用于模拟器每帧发送）
     const currentActionRef = useRef<string | null>(null);
@@ -46,8 +47,12 @@ const BaseControlPage = () => {
         setStatus("执行: " + action);
         if (!isSimulator) {
             console.log("http send " + action);
+            if (!targetIp) {
+                setStatus("请输入目标IP");
+                return;
+            }
             try {
-                const res = await fetch(`/api/control?action=${action}&speed=50&time=0`);
+                const res = await fetch(`/api/control?action=${action}&speed=50&time=0&target_ip=${encodeURIComponent(targetIp)}`);
                 if (!res.ok) throw new Error("请求失败");
                 const text = await res.text();
                 if (text) {
@@ -160,6 +165,28 @@ const BaseControlPage = () => {
           {isSimulator ? "模拟" : "实车"}
         </span>
             </div>
+
+            {/* 目标IP输入 */}
+            {!isSimulator && (
+                <div style={{marginTop: "15px"}}>
+                    <input
+                        type="text"
+                        placeholder="输入目标IP地址"
+                        value={targetIp}
+                        onChange={(e) => setTargetIp(e.target.value)}
+                        style={{
+                            padding: "8px 12px",
+                            borderRadius: "8px",
+                            border: "1px solid #3b82f6",
+                            background: "#1e293b",
+                            color: "white",
+                            fontSize: "14px",
+                            width: "200px",
+                            textAlign: "center",
+                        }}
+                    />
+                </div>
+            )}
 
             {/* 方向区 */}
             <div

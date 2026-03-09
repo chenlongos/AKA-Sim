@@ -7,3 +7,4 @@ einops
 torchvision
 flask-socketio
 eventlet
+requests
