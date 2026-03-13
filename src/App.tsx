@@ -100,9 +100,9 @@ export default function App() {
 
     const addLog = useCallback((message: string, type = 'info') => {
         setLogs(prev => {
-            const newLogs = [...prev, { message, type, time: new Date().toLocaleTimeString() }];
+            const newLogs = [{ message, type, time: new Date().toLocaleTimeString() }, ...prev];
             if (newLogs.length > 200) {
-                return newLogs.slice(newLogs.length - 200);
+                return newLogs.slice(0, 200);
             }
             return newLogs;
         });
@@ -527,12 +527,11 @@ export default function App() {
         if (w > 0) newActiveKeys['a'] = true;
         if (w < 0) newActiveKeys['d'] = true;
         
-        // Only update state if keys changed to avoid unnecessary re-renders
-        const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(activeKeys).length || 
-                           Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== activeKeys[k]);
-        if (keysChanged) {
-            setActiveKeys(newActiveKeys);
-        }
+        setActiveKeys(prev => {
+            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
+                               Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
+            return keysChanged ? newActiveKeys : prev;
+        });
 
         sim.current.robotState.velocity = v;
         sim.current.robotState.angularVelocity = w;
@@ -692,6 +691,7 @@ export default function App() {
         sim.current.robotState.velocity = 0;
         sim.current.robotState.angularVelocity = 0;
         setActiveKeys({});
+        setActionChunks([]);
 
         if (sim.current.robot) {
             sim.current.robot.position.set(0, 0, 0);
@@ -1004,6 +1004,7 @@ export default function App() {
         setIsInferencing(false);
         clearTimeout(sim.current.inferenceTimeoutId);
         setActiveKeys({});
+        setActionChunks([]);
 
         if (trainingMode === 'cloud') {
             const success = await cloudService.stopInference();
@@ -1117,6 +1118,7 @@ export default function App() {
                 weight: Math.exp(-0.5 * i) // Exponential weighting
             });
         }
+        setActionChunks(newChunk.map(a => a.v));
         sim.current.actionBuffer.push(newChunk);
 
         // Keep buffer size limited
@@ -1146,19 +1148,6 @@ export default function App() {
             robotState.velocity = robotState.velocity * 0.5 + targetV * 0.5;
             robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetW * 0.5;
 
-            // Update active keys for UI highlighting during inference
-            const newActiveKeys: Record<string, boolean> = {};
-            if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
-            if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
-            if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
-            if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
-            
-            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(activeKeys).length || 
-                               Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== activeKeys[k]);
-            if (keysChanged) {
-                setActiveKeys(newActiveKeys);
-            }
-
             // Log movement periodically (every 200ms)
             if (!sim.current.lastInferenceLogTime || Date.now() - sim.current.lastInferenceLogTime > 200) {
                 addLog(`Inference Movement: V=${robotState.velocity.toFixed(2)}, W=${robotState.angularVelocity.toFixed(2)}`, 'info');
@@ -1168,6 +1157,19 @@ export default function App() {
             robotState.velocity = Math.max(-speed, Math.min(speed, prediction[0]));
             robotState.angularVelocity = Math.max(-turnSpeed, Math.min(turnSpeed, prediction[1]));
         }
+
+        // Update active keys for UI highlighting during inference
+        const newActiveKeys: Record<string, boolean> = {};
+        if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
+        if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
+        if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
+        if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
+        
+        setActiveKeys(prev => {
+            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
+                               Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
+            return keysChanged ? newActiveKeys : prev;
+        });
 
         // Check goal
         if (targetDist < 1.0) {
@@ -1674,10 +1676,11 @@ export default function App() {
                     <div className="h-32 border-b border-slate-800 p-3 bg-slate-900/30">
                         <h4 className="text-xs font-semibold text-slate-400 mb-2 uppercase">Action Chunking (ACT)</h4>
                         <div className="flex items-end gap-1 h-16">
-                            {actionChunks.length > 0 ? actionChunks.map((act, idx) => {
-                                const colors = ['bg-slate-700', 'bg-blue-500', 'bg-blue-400', 'bg-purple-500', 'bg-purple-400'];
+                            {actionChunks.length > 0 ? actionChunks.map((v, idx) => {
+                                const height = Math.max(10, Math.min(100, Math.abs(v) * 100 / speed));
+                                const color = v > 0 ? 'bg-blue-500' : 'bg-purple-500';
                                 return (
-                                    <div key={idx} className={`flex-1 ${colors[act]} rounded-t transition-all duration-300`} style={{ height: `${20 + Math.random() * 60}%`, opacity: 1 - (idx * 0.1) }}></div>
+                                    <div key={idx} className={`flex-1 ${color} rounded-t transition-all duration-300`} style={{ height: `${height}%`, opacity: 1 - (idx * 0.05) }}></div>
                                 );
                             }) : (
                                 <div className="flex-1 bg-slate-800 rounded-t text-center text-[10px] text-slate-600 pt-2">Waiting...</div>
