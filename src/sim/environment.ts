@@ -84,14 +84,6 @@ export function updateEnvironment(
         group.add(net);
     }
     
-    const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-    const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
-    const target = new THREE.Mesh(targetGeo, targetMat);
-    target.position.set(halfSize/2 - 1, 0.4, halfSize/2 - 1);
-    target.castShadow = true;
-    target.userData = { w: 0.8, d: 0.8 };
-    group.add(target);
-    
     const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
     const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
     const ball = new THREE.Mesh(ballGeo, ballMat);
@@ -101,5 +93,5 @@ export function updateEnvironment(
     group.add(ball);
     walls.push(ball);
 
-    return { walls, group, target };
+    return { walls, group, target: null };
 }

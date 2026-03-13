@@ -23,16 +23,30 @@ export default function App() {
     const [selectedModel, setSelectedModel] = useState<string>('');
     const [trainedModel, setTrainedModel] = useState<{ name: string } | null>(null);
     const [showAttention, setShowAttention] = useState(false);
-    const [sceneType, setSceneType] = useState('basic');
-    const [sceneSize, setSceneSize] = useState('medium');
-    const [sceneComplexity, setSceneComplexity] = useState('medium');
-    const [lightPos, setLightPos] = useState({ x: 10, y: 20, z: 10 });
-    const [speed, setSpeed] = useState(0.1);
-    const [turnSpeed, setTurnSpeed] = useState(0.05);
+    const [sceneType, setSceneType] = useState(() => localStorage.getItem('sceneType') || 'basic');
+    const [sceneSize, setSceneSize] = useState(() => localStorage.getItem('sceneSize') || 'medium');
+    const [sceneComplexity, setSceneComplexity] = useState(() => localStorage.getItem('sceneComplexity') || 'low');
+    const [lightPos, setLightPos] = useState(() => {
+        const saved = localStorage.getItem('lightPos');
+        return saved ? JSON.parse(saved) : { x: 10, y: 20, z: 10 };
+    });
+    const [speed, setSpeed] = useState(() => Number(localStorage.getItem('speed')) || 0.1);
+    const [turnSpeed, setTurnSpeed] = useState(() => Number(localStorage.getItem('turnSpeed')) || 0.05);
     const [logs, setLogs] = useState<{ message: string, type: string, time: string }[]>([
         { message: 'System initialized. Waiting for commands...', type: 'info', time: new Date().toLocaleTimeString() }
     ]);
     const [actionChunks, setActionChunks] = useState<number[]>([]);
+    const [activeKeys, setActiveKeys] = useState<Record<string, boolean>>({});
+
+    // Persist settings
+    useEffect(() => {
+        localStorage.setItem('sceneType', sceneType);
+        localStorage.setItem('sceneSize', sceneSize);
+        localStorage.setItem('sceneComplexity', sceneComplexity);
+        localStorage.setItem('lightPos', JSON.stringify(lightPos));
+        localStorage.setItem('speed', speed.toString());
+        localStorage.setItem('turnSpeed', turnSpeed.toString());
+    }, [sceneType, sceneSize, sceneComplexity, lightPos, speed, turnSpeed]);
 
     // Cloud Training State
     const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
@@ -278,7 +292,7 @@ export default function App() {
             addWall(30, 0, 0.5, 2, 60);
         }
 
-        let numObstacles = 2;
+        let numObstacles = 0;
         if (sceneComplexity === 'medium') numObstacles = 5;
         if (sceneComplexity === 'high') numObstacles = 12;
 
@@ -325,15 +339,6 @@ export default function App() {
             group.add(net);
         }
 
-        const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
-        const target = new THREE.Mesh(targetGeo, targetMat);
-        target.position.set(halfSize / 2 - 1, 0.4, halfSize / 2 - 1);
-        target.castShadow = true;
-        target.userData = { w: 0.8, d: 0.8 };
-        group.add(target);
-        sim.current.target = target;
-
         const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
         const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
         const ball = new THREE.Mesh(ballGeo, ballMat);
@@ -342,11 +347,19 @@ export default function App() {
         ball.userData = { w: 0.5, d: 0.5 };
         group.add(ball);
         sim.current.walls.push(ball);
+        sim.current.target = ball; // Use ball as the target since red cube is removed
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
     }, [sceneType, sceneSize, sceneComplexity, addLog]);
 
-    const [enableCollisionProtection, setEnableCollisionProtection] = useState(true);
+    const [enableCollisionProtection, setEnableCollisionProtection] = useState(() => {
+        const saved = localStorage.getItem('enableCollisionProtection');
+        return saved !== null ? saved === 'true' : true;
+    });
+
+    useEffect(() => {
+        localStorage.setItem('enableCollisionProtection', enableCollisionProtection.toString());
+    }, [enableCollisionProtection]);
 
     const captureImage = useCallback(() => {
         if (!cameraCanvasRef.current) return null;
@@ -507,9 +520,23 @@ export default function App() {
             }
         }
 
+        // Update active keys for UI highlighting
+        const newActiveKeys: Record<string, boolean> = {};
+        if (v > 0) newActiveKeys['w'] = true;
+        if (v < 0) newActiveKeys['s'] = true;
+        if (w > 0) newActiveKeys['a'] = true;
+        if (w < 0) newActiveKeys['d'] = true;
+        
+        // Only update state if keys changed to avoid unnecessary re-renders
+        const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(activeKeys).length || 
+                           Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== activeKeys[k]);
+        if (keysChanged) {
+            setActiveKeys(newActiveKeys);
+        }
+
         sim.current.robotState.velocity = v;
         sim.current.robotState.angularVelocity = w;
-    }, [speed, turnSpeed]);
+    }, [speed, turnSpeed, addLog]);
 
     const updatePhysics = useCallback(() => {
         const state = sim.current.robotState;
@@ -664,6 +691,7 @@ export default function App() {
         sim.current.robotState.rotation = 0;
         sim.current.robotState.velocity = 0;
         sim.current.robotState.angularVelocity = 0;
+        setActiveKeys({});
 
         if (sim.current.robot) {
             sim.current.robot.position.set(0, 0, 0);
@@ -975,6 +1003,7 @@ export default function App() {
         sim.current.isInferencing = false;
         setIsInferencing(false);
         clearTimeout(sim.current.inferenceTimeoutId);
+        setActiveKeys({});
 
         if (trainingMode === 'cloud') {
             const success = await cloudService.stopInference();
@@ -1116,6 +1145,19 @@ export default function App() {
             // Simple low-pass filter (alpha = 0.5)
             robotState.velocity = robotState.velocity * 0.5 + targetV * 0.5;
             robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetW * 0.5;
+
+            // Update active keys for UI highlighting during inference
+            const newActiveKeys: Record<string, boolean> = {};
+            if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
+            if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
+            if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
+            if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
+            
+            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(activeKeys).length || 
+                               Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== activeKeys[k]);
+            if (keysChanged) {
+                setActiveKeys(newActiveKeys);
+            }
 
             // Log movement periodically (every 200ms)
             if (!sim.current.lastInferenceLogTime || Date.now() - sim.current.lastInferenceLogTime > 200) {
@@ -1399,7 +1441,7 @@ export default function App() {
                                 <div className="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
                                     <div></div>
                                     <button
-                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['w'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['w'] = true}
                                         onMouseUp={() => sim.current.keys['w'] = false}
                                         onMouseLeave={() => sim.current.keys['w'] = false}
@@ -1411,7 +1453,7 @@ export default function App() {
                                     </button>
                                     <div></div>
                                     <button
-                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['a'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['a'] = true}
                                         onMouseUp={() => sim.current.keys['a'] = false}
                                         onMouseLeave={() => sim.current.keys['a'] = false}
@@ -1422,7 +1464,7 @@ export default function App() {
                                         <span className="text-[10px]">A</span>
                                     </button>
                                     <button
-                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['s'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['s'] = true}
                                         onMouseUp={() => sim.current.keys['s'] = false}
                                         onMouseLeave={() => sim.current.keys['s'] = false}
@@ -1433,7 +1475,7 @@ export default function App() {
                                         <span className="text-[10px]">S</span>
                                     </button>
                                     <button
-                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['d'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['d'] = true}
                                         onMouseUp={() => sim.current.keys['d'] = false}
                                         onMouseLeave={() => sim.current.keys['d'] = false}
