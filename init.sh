@@ -1,7 +1,0 @@
-#!/bin/sh
-
-chmod +x /root/AKA-00/https_init.sh
-
-/root/AKA-00/https_init.sh
-
-nohup python3 /root/AKA-00/run.py > app.log 2>&1 &

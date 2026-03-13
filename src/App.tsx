@@ -1,0 +1,1668 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as THREE from 'three';
+import * as tf from '@tensorflow/tfjs';
+import { cloudService } from './services/cloudService';
+import { actService } from './services/actService';
+import { CloudModel, CloudDataset, CloudTrainingStatus, SimulationState, RobotConfig, SceneType, SceneSize, SceneComplexity, LogEntry } from './types';
+import { createScene, createCamera, createRenderer, createLights, createFloor } from './sim/scene';
+import { createRobot } from './sim/robot';
+import { updateEnvironment } from './sim/environment';
+import { tr } from 'motion/react-client';
+
+export default function App() {
+    // State
+    const [isRecording, setIsRecording] = useState(false);
+    const [isTraining, setIsTraining] = useState(false);
+    const [isInferencing, setIsInferencing] = useState(false);
+    const [episodesCount, setEpisodesCount] = useState(0);
+    const [frameCount, setFrameCount] = useState(0);
+    const [actionCount, setActionCount] = useState(0);
+    const [trainingProgress, setTrainingProgress] = useState(0);
+    const [trainingStatus, setTrainingStatus] = useState('');
+    const [trainedModels, setTrainedModels] = useState<{ name: string }[]>([]);
+    const [selectedModel, setSelectedModel] = useState<string>('');
+    const [trainedModel, setTrainedModel] = useState<{ name: string } | null>(null);
+    const [showAttention, setShowAttention] = useState(false);
+    const [sceneType, setSceneType] = useState('basic');
+    const [sceneSize, setSceneSize] = useState('medium');
+    const [sceneComplexity, setSceneComplexity] = useState('medium');
+    const [lightPos, setLightPos] = useState({ x: 10, y: 20, z: 10 });
+    const [speed, setSpeed] = useState(0.1);
+    const [turnSpeed, setTurnSpeed] = useState(0.05);
+    const [logs, setLogs] = useState<{ message: string, type: string, time: string }[]>([
+        { message: 'System initialized. Waiting for commands...', type: 'info', time: new Date().toLocaleTimeString() }
+    ]);
+    const [actionChunks, setActionChunks] = useState<number[]>([]);
+
+    // Cloud Training State
+    const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
+    const [cloudModels, setCloudModels] = useState<any[]>([]);
+    const [cloudDatasets, setCloudDatasets] = useState<any[]>([]);
+    const [selectedCloudModel, setSelectedCloudModel] = useState('');
+    const [selectedCloudDataset, setSelectedCloudDataset] = useState('');
+    const [cloudTrainingStatus, setCloudTrainingStatus] = useState<any>(null);
+
+    // Refs for DOM elements updated frequently
+    const posXRef = useRef<HTMLSpanElement>(null);
+    const posZRef = useRef<HTMLSpanElement>(null);
+    const rotYRef = useRef<HTMLSpanElement>(null);
+    const velocityRef = useRef<HTMLSpanElement>(null);
+    const canvasContainerRef = useRef<HTMLDivElement>(null);
+    const cameraCanvasRef = useRef<HTMLCanvasElement>(null);
+    const logContainerRef = useRef<HTMLDivElement>(null);
+    const smallCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+    // Simulation State
+    const sim = useRef({
+        robotState: { x: 0, z: 0, rotation: 0, velocity: 0, angularVelocity: 0 },
+        isRecording: false,
+        isTraining: false,
+        isInferencing: false,
+        episodes: [] as any[],
+        currentEpisode: [] as any[],
+        target: null as THREE.Mesh | null,
+        walls: [] as THREE.Mesh[],
+        environmentGroup: null as THREE.Group | null,
+        dirLight: null as THREE.DirectionalLight | null,
+        plane: null as THREE.Mesh | null,
+        robot: null as THREE.Group | null,
+        camera: null as THREE.PerspectiveCamera | null,
+        scene: null as THREE.Scene | null,
+        renderer: null as THREE.WebGLRenderer | null,
+        onboardCamera: null as THREE.PerspectiveCamera | null,
+        onboardRenderTarget: null as THREE.WebGLRenderTarget | null,
+        keys: {} as Record<string, boolean>,
+        animationFrameId: 0,
+        inferenceTimeoutId: 0 as unknown as ReturnType<typeof setTimeout>,
+        model: null as tf.LayersModel | null,
+        recordingIntervalId: null as unknown as ReturnType<typeof setInterval>,
+        lastX: 0,
+        lastZ: 0,
+        stuckCounter: 0,
+        actionBuffer: [] as any[],
+        lastInferenceLogTime: 0,
+        lastManualLogTime: 0
+    });
+
+    const addLog = useCallback((message: string, type = 'info') => {
+        setLogs(prev => {
+            const newLogs = [...prev, { message, type, time: new Date().toLocaleTimeString() }];
+            if (newLogs.length > 200) {
+                return newLogs.slice(newLogs.length - 200);
+            }
+            return newLogs;
+        });
+    }, []);
+
+    const clearLogs = () => setLogs([]);
+
+    useEffect(() => {
+        if (!canvasContainerRef.current) return;
+
+        const container = canvasContainerRef.current;
+
+        // Scene
+        const scene = createScene();
+        sim.current.scene = scene;
+
+        // Camera
+        const camera = createCamera(container.clientWidth, container.clientHeight);
+        sim.current.camera = camera;
+
+        // Renderer
+        const renderer = createRenderer(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
+        sim.current.renderer = renderer;
+
+        // Lights
+        const dirLight = createLights(scene, { x: 10, y: 20, z: 10 });
+        sim.current.dirLight = dirLight;
+
+        // Floor
+        const plane = createFloor(scene);
+        sim.current.plane = plane;
+
+        // Environment Group
+        const environmentGroup = new THREE.Group();
+        scene.add(environmentGroup);
+        sim.current.environmentGroup = environmentGroup;
+
+        // Robot
+        const { robot, onboardCamera, onboardRenderTarget } = createRobot(scene);
+        sim.current.robot = robot;
+        sim.current.onboardCamera = onboardCamera;
+        sim.current.onboardRenderTarget = onboardRenderTarget;
+
+        scene.add(robot);
+
+        // Resize handler
+        const onWindowResize = () => {
+            if (!container || !sim.current.camera || !sim.current.renderer) return;
+            sim.current.camera.aspect = container.clientWidth / container.clientHeight;
+            sim.current.camera.updateProjectionMatrix();
+            sim.current.renderer.setSize(container.clientWidth, container.clientHeight);
+        };
+        window.addEventListener('resize', onWindowResize);
+
+        return () => {
+            window.removeEventListener('resize', onWindowResize);
+            cancelAnimationFrame(sim.current.animationFrameId);
+            if (container && sim.current.renderer) {
+                container.removeChild(sim.current.renderer.domElement);
+            }
+        };
+    }, [addLog]);
+
+    useEffect(() => {
+        if (sim.current.dirLight) {
+            sim.current.dirLight.position.set(lightPos.x, lightPos.y, lightPos.z);
+        }
+    }, [lightPos]);
+
+    useEffect(() => {
+        if (!sim.current.environmentGroup || !sim.current.plane) return;
+
+        const group = sim.current.environmentGroup;
+        const plane = sim.current.plane;
+
+        while (group.children.length > 0) {
+            group.remove(group.children[0]);
+        }
+        sim.current.walls = [];
+
+        let sizeVal = 20;
+        if (sceneSize === 'small') sizeVal = 10;
+        if (sceneSize === 'large') sizeVal = 30;
+
+        const halfSize = sizeVal / 2;
+
+        const createTexture = (type: string) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d')!;
+
+            if (type === 'wood') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 200; i++) {
+                    ctx.fillStyle = `rgba(60, 30, 10, ${Math.random() * 0.15})`;
+                    ctx.fillRect(0, Math.random() * 512, 512, Math.random() * 10);
+                }
+            } else if (type === 'tile') {
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 4;
+                for (let i = 0; i <= 512; i += 64) {
+                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+                }
+            } else if (type === 'tennis') {
+                ctx.fillStyle = '#1e5631';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(64, 32, 384, 448);
+                ctx.beginPath(); ctx.moveTo(100, 32); ctx.lineTo(100, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(412, 32); ctx.lineTo(412, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 128); ctx.lineTo(412, 128); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 384); ctx.lineTo(412, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 128); ctx.lineTo(256, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 32); ctx.lineTo(256, 40); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 480); ctx.lineTo(256, 472); ctx.stroke();
+                ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.moveTo(64, 256); ctx.lineTo(448, 256); ctx.stroke();
+            } else if (type === 'wall') {
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 500; i++) {
+                    ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.03})`;
+                    ctx.beginPath();
+                    ctx.arc(Math.random() * 512, Math.random() * 512, Math.random() * 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            if (type !== 'tennis') tex.repeat.set(sizeVal / 5, sizeVal / 5);
+            return tex;
+        };
+
+        const woodTex = createTexture('wood');
+        const tileTex = createTexture('tile');
+        const tennisTex = createTexture('tennis');
+        const wallTex = createTexture('wall');
+
+        const planeMat = plane.material as THREE.MeshStandardMaterial;
+        if (sceneType === 'living_room') {
+            planeMat.map = woodTex;
+            planeMat.color.setHex(0xffffff);
+        } else if (sceneType === 'classroom') {
+            planeMat.map = tileTex;
+            planeMat.color.setHex(0xffffff);
+        } else if (sceneType === 'tennis_court') {
+            planeMat.map = tennisTex;
+            planeMat.color.setHex(0xffffff);
+        } else {
+            planeMat.map = null;
+            planeMat.color.setHex(0x1e293b);
+        }
+        planeMat.needsUpdate = true;
+
+        const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, color: 0xd1d5db, roughness: 0.9 });
+
+        const addWall = (x: number, z: number, w: number, h: number, d: number, color?: number, map?: THREE.Texture) => {
+            const mat = color ? new THREE.MeshStandardMaterial({ color, map: map || null }) : wallMat;
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, h / 2, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData = { w, d };
+            group.add(mesh);
+            sim.current.walls.push(mesh);
+        };
+
+        if (sceneType !== 'tennis_court') {
+            addWall(0, -halfSize, sizeVal, 2, 0.5);
+            addWall(0, halfSize, sizeVal, 2, 0.5);
+            addWall(-halfSize, 0, 0.5, 2, sizeVal);
+            addWall(halfSize, 0, 0.5, 2, sizeVal);
+        } else {
+            addWall(0, -30, 60, 2, 0.5);
+            addWall(0, 30, 60, 2, 0.5);
+            addWall(-30, 0, 0.5, 2, 60);
+            addWall(30, 0, 0.5, 2, 60);
+        }
+
+        let numObstacles = 2;
+        if (sceneComplexity === 'medium') numObstacles = 5;
+        if (sceneComplexity === 'high') numObstacles = 12;
+
+        if (sceneType === 'basic') {
+            for (let i = 0; i < numObstacles; i++) {
+                const w = 1 + Math.random() * 2;
+                const d = 1 + Math.random() * 2;
+                const x = (Math.random() - 0.5) * (sizeVal - 4);
+                const z = (Math.random() - 0.5) * (sizeVal - 4);
+                if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                addWall(x, z, w, 1.5, d, 0x64748b);
+            }
+        } else if (sceneType === 'living_room') {
+            addWall(0, -halfSize + 2, 4, 1, 1.5, 0x334155);
+            addWall(0, -halfSize + 1.2, 4, 2, 0.5, 0x334155);
+            addWall(0, halfSize - 1, 3, 0.8, 1, 0x8b5cf6);
+            addWall(0, -halfSize + 4, 2, 0.5, 1.5, 0xffffff, woodTex);
+
+            for (let i = 0; i < numObstacles - 3; i++) {
+                const w = 0.8 + Math.random() * 1;
+                const d = 0.8 + Math.random() * 1;
+                const x = (Math.random() - 0.5) * (sizeVal - 4);
+                const z = (Math.random() - 0.5) * (sizeVal - 4);
+                if (Math.abs(x) < 3 && Math.abs(z) < 3) continue;
+                addWall(x, z, w, 1 + Math.random(), d, 0x475569);
+            }
+        } else if (sceneType === 'classroom') {
+            const rows = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+            const cols = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = -halfSize / 2 + 2 + c * 3;
+                    const z = -halfSize / 2 + 2 + r * 3;
+                    if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                    addWall(x, z, 1.5, 0.8, 1, 0xffffff, woodTex);
+                }
+            }
+            addWall(0, halfSize - 2, 3, 1, 1.5, 0xffffff, woodTex);
+        } else if (sceneType === 'tennis_court') {
+            const netMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, wireframe: true });
+            const netGeo = new THREE.BoxGeometry(60, 1, 0.5);
+            const net = new THREE.Mesh(netGeo, netMat);
+            net.position.set(0, 0.5, 0);
+            group.add(net);
+        }
+
+        const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
+        const target = new THREE.Mesh(targetGeo, targetMat);
+        target.position.set(halfSize / 2 - 1, 0.4, halfSize / 2 - 1);
+        target.castShadow = true;
+        target.userData = { w: 0.8, d: 0.8 };
+        group.add(target);
+        sim.current.target = target;
+
+        const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
+        const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
+        const ball = new THREE.Mesh(ballGeo, ballMat);
+        ball.position.set(-halfSize / 2 + 1.5, 0.25, halfSize / 2 - 1.5);
+        ball.castShadow = true;
+        ball.userData = { w: 0.5, d: 0.5 };
+        group.add(ball);
+        sim.current.walls.push(ball);
+
+        addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
+    }, [sceneType, sceneSize, sceneComplexity, addLog]);
+
+    const [enableCollisionProtection, setEnableCollisionProtection] = useState(true);
+
+    const captureImage = useCallback(() => {
+        if (!cameraCanvasRef.current) return null;
+
+        if (!smallCanvasRef.current) {
+            const c = document.createElement('canvas');
+            c.width = 64;
+            c.height = 64;
+            smallCanvasRef.current = c;
+        }
+
+        const smallCtx = smallCanvasRef.current.getContext('2d', { willReadFrequently: true });
+        if (smallCtx) {
+            smallCtx.drawImage(cameraCanvasRef.current, 0, 0, 64, 64);
+        }
+
+        return tf.tidy(() => {
+            const img = tf.browser.fromPixels(smallCanvasRef.current!);
+            const normalized = img.div(255.0);
+            return normalized.arraySync() as number[][][];
+        });
+    }, []);
+
+    const recordFrame = useCallback(() => {
+        if (!sim.current.target || !sim.current.isRecording) return;
+
+        // Smart Recording: Check for collision
+        if (enableCollisionProtection && sim.current.isColliding) {
+            addLog('Collision detected! Stopping recording and discarding last 1s...', 'warning');
+
+            // Discard last 1 second (approx 10 frames at 10Hz recording)
+            const framesToDiscard = 10;
+            if (sim.current.currentEpisode.length > framesToDiscard) {
+                sim.current.currentEpisode.splice(-framesToDiscard, framesToDiscard);
+            } else {
+                sim.current.currentEpisode = [];
+            }
+
+            toggleRecording(); // Stop recording
+            return;
+        }
+
+        const image = captureImage();
+        if (!image) return;
+
+        // Use small canvas for Base64 - much faster
+        const imageBase64 = smallCanvasRef.current?.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+        // Match reference state structure:
+        // state: [x, y, angle, speed, ballDist, isColliding, ...zeros] (14 dims)
+
+        const x = sim.current.robotState.x;
+        const z = sim.current.robotState.z; // treating z as y in 2D
+        const angle = sim.current.robotState.rotation;
+        const speed = sim.current.robotState.velocity;
+
+        const targetDist = Math.hypot(sim.current.target.position.x - x, sim.current.target.position.z - z);
+
+        const state = new Array(14).fill(0);
+        state[0] = x;
+        state[1] = z;
+        state[2] = angle;
+        state[3] = speed;
+        state[4] = targetDist;
+        state[5] = sim.current.isColliding ? 1.0 : 0.0; // Explicitly tell model we are colliding
+
+        const envState = new Array(7).fill(0);
+        envState[0] = x;
+        envState[1] = z;
+        envState[2] = angle;
+        envState[3] = speed;
+        envState[4] = sim.current.isColliding ? 1 : 0;
+        envState[5] = 0; // Forward distance placeholder
+        envState[6] = targetDist;
+
+        // Action: [up, down, left, right, stop] (one-hot or similar)
+        // Reference uses commandToActionVec which returns 5-dim vector.
+        // Our current action is [velocity, angularVelocity].
+        // We need to map continuous controls to discrete if we want to match reference exactly,
+        // OR ensure the backend handles continuous.
+        // The reference metadata says "action_space: discrete_5".
+        // So we should map our keys to discrete actions.
+
+        let action = [0, 0, 0, 0, 1]; // Default stop
+        const keys = sim.current.keys;
+        if (keys['w'] || keys['arrowup']) action = [1, 0, 0, 0, 0];
+        else if (keys['s'] || keys['arrowdown']) action = [0, 1, 0, 0, 0];
+        else if (keys['a'] || keys['arrowleft']) action = [0, 0, 1, 0, 0];
+        else if (keys['d'] || keys['arrowright']) action = [0, 0, 0, 1, 0];
+
+        const frame = {
+            state: state,
+            envState: envState,
+            image: image,
+            imageBase64: imageBase64,
+            action: action
+        };
+
+        sim.current.currentEpisode.push(frame);
+
+        // Throttle UI updates to avoid lag
+        if (sim.current.currentEpisode.length % 5 === 0) {
+            setFrameCount(sim.current.currentEpisode.length);
+            setActionCount(sim.current.currentEpisode.length);
+        }
+    }, [captureImage]);
+
+    const sendCommand = useCallback((cmd: string) => {
+        if (sim.current.isTraining) return;
+
+        switch (cmd) {
+            case 'forward': sim.current.robotState.velocity = speed; break;
+            case 'backward': sim.current.robotState.velocity = -speed; break;
+            case 'left': sim.current.robotState.angularVelocity = turnSpeed; break;
+            case 'right': sim.current.robotState.angularVelocity = -turnSpeed; break;
+        }
+
+        addLog(`Command: ${cmd.toUpperCase()}`, 'info');
+    }, [addLog, speed, turnSpeed]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const key = e.key.toLowerCase();
+            sim.current.keys[key] = true;
+            if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+                e.preventDefault();
+            }
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            sim.current.keys[e.key.toLowerCase()] = false;
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        document.addEventListener('keyup', handleKeyUp);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('keyup', handleKeyUp);
+        };
+    }, []);
+
+    const updateRobotMovement = useCallback(() => {
+        if (sim.current.isInferencing || sim.current.isTraining) return;
+
+        const keys = sim.current.keys;
+        let v = 0;
+        let w = 0;
+
+        if (keys['w'] || keys['arrowup']) v += speed;
+        if (keys['s'] || keys['arrowdown']) v -= speed;
+        if (keys['a'] || keys['arrowleft']) w += turnSpeed;
+        if (keys['d'] || keys['arrowright']) w -= turnSpeed;
+
+        if (v !== 0 || w !== 0) {
+            if (!sim.current.lastManualLogTime || Date.now() - sim.current.lastManualLogTime > 200) {
+                addLog(`Manual Movement: V=${v.toFixed(2)}, W=${w.toFixed(2)}`, 'info');
+                sim.current.lastManualLogTime = Date.now();
+            }
+        }
+
+        sim.current.robotState.velocity = v;
+        sim.current.robotState.angularVelocity = w;
+    }, [speed, turnSpeed]);
+
+    const updatePhysics = useCallback(() => {
+        const state = sim.current.robotState;
+        const robot = sim.current.robot;
+        const camera = sim.current.camera;
+
+        const nextX = state.x + Math.sin(state.rotation) * state.velocity;
+        const nextZ = state.z + Math.cos(state.rotation) * state.velocity;
+
+        let collided = false;
+        const robotRadius = 0.9; // Increased to cover camera offset (1.2) and body
+        const checkAABB = (objX: number, objZ: number, w: number, d: number) => {
+            return (nextX > objX - w / 2 - robotRadius &&
+                nextX < objX + w / 2 + robotRadius &&
+                nextZ > objZ - d / 2 - robotRadius &&
+                nextZ < objZ + d / 2 + robotRadius);
+        };
+
+        sim.current.walls.forEach(wall => {
+            if (checkAABB(wall.position.x, wall.position.z, wall.userData.w, wall.userData.d)) {
+                collided = true;
+            }
+        });
+
+        if (sim.current.target && checkAABB(sim.current.target.position.x, sim.current.target.position.z, sim.current.target.userData.w, sim.current.target.userData.d)) {
+            collided = true;
+        }
+
+        sim.current.isColliding = collided; // Expose collision state
+
+        if (!collided) {
+            state.x = nextX;
+            state.z = nextZ;
+        } else {
+            state.velocity = 0;
+        }
+
+        state.rotation += state.angularVelocity;
+
+        state.velocity *= 0.9;
+        state.angularVelocity *= 0.9;
+
+        if (robot) {
+            robot.position.x = state.x;
+            robot.position.z = state.z;
+            robot.rotation.y = state.rotation;
+        }
+
+        if (camera) {
+            camera.position.x = state.x;
+            camera.position.z = state.z + 12;
+            camera.lookAt(state.x, 0, state.z);
+        }
+
+        if (posXRef.current) posXRef.current.textContent = state.x.toFixed(2);
+        if (posZRef.current) posZRef.current.textContent = state.z.toFixed(2);
+        if (rotYRef.current) rotYRef.current.textContent = (state.rotation * 180 / Math.PI).toFixed(0) + '°';
+        if (velocityRef.current) velocityRef.current.textContent = (Math.abs(state.velocity) * 10).toFixed(1);
+    }, []);
+
+    const updateOnboardCamera = useCallback(() => {
+        const { onboardCamera, onboardRenderTarget, renderer, scene, robotState } = sim.current;
+        const canvas = cameraCanvasRef.current;
+        if (!onboardCamera || !onboardRenderTarget || !renderer || !scene || !canvas) return;
+
+        const dirX = Math.sin(robotState.rotation);
+        const dirZ = Math.cos(robotState.rotation);
+
+        onboardCamera.position.set(
+            robotState.x + dirX * 0.9,
+            0.7,
+            robotState.z + dirZ * 0.8
+        );
+
+        onboardCamera.lookAt(
+            robotState.x + dirX * 10.0,
+            0.7,
+            robotState.z + dirZ * 10.0
+        );
+
+        renderer.setRenderTarget(onboardRenderTarget);
+        renderer.clear();
+        renderer.render(scene, onboardCamera);
+        renderer.setRenderTarget(null);
+
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        canvas.width = 320;
+        canvas.height = 240;
+
+        const pixels = new Uint8Array(320 * 240 * 4);
+        renderer.readRenderTargetPixels(onboardRenderTarget, 0, 0, 320, 240, pixels);
+
+        const imageData = ctx.createImageData(320, 240);
+
+        for (let y = 0; y < 240; y++) {
+            for (let x = 0; x < 320; x++) {
+                const srcIdx = ((239 - y) * 320 + x) * 4;
+                const dstIdx = (y * 320 + x) * 4;
+
+                imageData.data[dstIdx] = pixels[srcIdx];
+                imageData.data[dstIdx + 1] = pixels[srcIdx + 1];
+                imageData.data[dstIdx + 2] = pixels[srcIdx + 2];
+                imageData.data[dstIdx + 3] = 255;
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+    }, []);
+
+    const animate = useCallback(() => {
+        sim.current.animationFrameId = requestAnimationFrame(animate);
+
+        updateRobotMovement();
+        updatePhysics();
+        updateOnboardCamera();
+
+        if (sim.current.renderer && sim.current.scene && sim.current.camera) {
+            sim.current.renderer.render(sim.current.scene, sim.current.camera);
+        }
+    }, [updateRobotMovement, updatePhysics, updateOnboardCamera]);
+
+    useEffect(() => {
+        sim.current.animationFrameId = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(sim.current.animationFrameId);
+    }, [animate]);
+
+    const toggleRecording = () => {
+        if (!sim.current.isRecording) {
+            sim.current.isRecording = true;
+            sim.current.currentEpisode = [];
+            setIsRecording(true);
+            addLog('Started recording episode...', 'success');
+
+            sim.current.recordingIntervalId = setInterval(recordFrame, 100);
+        } else {
+            sim.current.isRecording = false;
+            setIsRecording(false);
+            if (sim.current.recordingIntervalId) clearInterval(sim.current.recordingIntervalId);
+
+            if (sim.current.currentEpisode.length > 0) {
+                sim.current.episodes.push([...sim.current.currentEpisode]);
+                setEpisodesCount(sim.current.episodes.length);
+                addLog(`Episode saved. Total episodes: ${sim.current.episodes.length}`, 'success');
+            }
+        }
+    };
+
+    const resetRobot = () => {
+        sim.current.robotState.x = 0;
+        sim.current.robotState.z = 0;
+        sim.current.robotState.rotation = 0;
+        sim.current.robotState.velocity = 0;
+        sim.current.robotState.angularVelocity = 0;
+
+        if (sim.current.robot) {
+            sim.current.robot.position.set(0, 0, 0);
+            sim.current.robot.rotation.y = 0;
+        }
+
+        addLog('Robot position reset to origin', 'warning');
+    };
+
+    const saveDataset = () => {
+        if (trainingMode === 'cloud') {
+            saveCloudDataset();
+            return;
+        }
+
+        if (sim.current.episodes.length === 0) return;
+
+        const dataset = {
+            metadata: {
+                robot_type: "diff_drive",
+                action_space: "discrete_5",
+                fps: 10,
+                created: new Date().toISOString()
+            },
+            episodes: sim.current.episodes
+        };
+
+        const blob = new Blob([JSON.stringify(dataset, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `lerobot_act_dataset_${Date.now()}.json`;
+        a.click();
+
+        addLog('Dataset downloaded successfully', 'success');
+    };
+
+    const handleImportDataset = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const content = e.target?.result as string;
+                const dataset = JSON.parse(content);
+
+                if (dataset.episodes && Array.isArray(dataset.episodes)) {
+                    sim.current.episodes = dataset.episodes;
+                    setEpisodesCount(dataset.episodes.length);
+
+                    // Calculate total frames and actions
+                    let totalFrames = 0;
+                    dataset.episodes.forEach((ep: any[]) => totalFrames += ep.length);
+                    setFrameCount(totalFrames);
+                    setActionCount(totalFrames); // Assuming 1 action per frame
+
+                    addLog(`Dataset imported: ${dataset.episodes.length} episodes`, 'success');
+                } else {
+                    addLog('Invalid dataset format', 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                addLog('Failed to parse dataset file', 'error');
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const finishTraining = useCallback(() => {
+        sim.current.isTraining = false;
+        setIsTraining(false);
+        const newModelName = `ACT_Model_v${trainedModels.length + 1}`;
+        const newModel = { name: newModelName };
+        setTrainedModels(prev => [...prev, newModel]);
+        setTrainedModel(newModel);
+        setSelectedModel(newModelName);
+
+        addLog('Training complete! Model ready for inference.', 'success');
+        addLog(`Model: ${newModelName} with CVAE prior, Chunk size: 8`, 'info');
+    }, [addLog, trainedModels.length]);
+
+    // Cloud Functions
+    const fetchCloudModels = useCallback(async () => {
+        const models = await cloudService.fetchModels();
+        setCloudModels(models);
+        if (models.length > 0 && !selectedCloudModel) {
+            setSelectedCloudModel(models[0].id);
+        }
+    }, [selectedCloudModel]);
+
+    const fetchCloudDatasets = useCallback(async () => {
+        const datasets = await cloudService.fetchDatasets();
+        setCloudDatasets(datasets);
+        if (datasets.length > 0 && !selectedCloudDataset) {
+            setSelectedCloudDataset(datasets[0].path);
+        }
+    }, [selectedCloudDataset]);
+
+    useEffect(() => {
+        if (trainingMode === 'cloud') {
+            fetchCloudModels();
+            fetchCloudDatasets();
+        }
+    }, [trainingMode, fetchCloudModels, fetchCloudDatasets]);
+
+    const CHUNK_SIZE = 10;
+    const ACTION_DIM = 5;
+
+    const packDataset = (episodes: any[]) => {
+        const states: number[][] = [];
+        const env_states: number[][] = [];
+        const actions: number[][][] = [];
+        const action_is_pad: number[][] = [];
+        const images: string[][][] = [];
+        let hasImages = false;
+
+        episodes.forEach(ep => {
+            // ep is an array of frames
+            for (let i = 0; i < ep.length; i += CHUNK_SIZE) {
+                const chunkSteps = ep.slice(i, i + CHUNK_SIZE);
+                const firstStep = chunkSteps[0];
+
+                const stateChunk = firstStep.state || new Array(14).fill(0);
+                const envChunk = firstStep.envState || new Array(7).fill(0);
+
+                const actionChunk: number[][] = [];
+                const padChunk: number[] = [];
+                const imageChunk: string[][] = [];
+
+                chunkSteps.forEach((step: any) => {
+                    actionChunk.push(step.action);
+                    padChunk.push(0);
+                    const image = step.imageBase64 || "";
+                    if (image) hasImages = true;
+                    imageChunk.push([image]);
+                });
+
+                for (let pad = chunkSteps.length; pad < CHUNK_SIZE; pad += 1) {
+                    actionChunk.push(new Array(ACTION_DIM).fill(0));
+                    padChunk.push(1);
+                    imageChunk.push([""]);
+                }
+
+                states.push(stateChunk);
+                env_states.push(envChunk);
+                actions.push(actionChunk);
+                action_is_pad.push(padChunk);
+                images.push(imageChunk);
+            }
+        });
+
+        if (hasImages) {
+            return { states, env_states, actions, action_is_pad, images };
+        }
+        return { states, env_states, actions, action_is_pad };
+    };
+
+    const saveCloudDataset = async () => {
+        if (sim.current.episodes.length === 0) return;
+        addLog('Uploading dataset to cloud...', 'info');
+
+        const dataset = packDataset(sim.current.episodes);
+        const success = await cloudService.saveDataset(dataset);
+
+        if (success) {
+            addLog('Dataset uploaded successfully!', 'success');
+            fetchCloudDatasets();
+        } else {
+            addLog('Failed to upload dataset.', 'error');
+        }
+    };
+
+    const startCloudTraining = async () => {
+        if (!selectedCloudDataset) {
+            addLog('Please select a dataset for cloud training.', 'error');
+            return;
+        }
+
+        setIsTraining(true);
+        setTrainingStatus('Initiating Cloud Training...');
+
+        const success = await cloudService.startTraining(selectedCloudDataset);
+
+        if (success) {
+            addLog('Cloud training started.', 'success');
+            // Poll for status
+            const interval = setInterval(async () => {
+                const status = await cloudService.getTrainingStatus();
+                setCloudTrainingStatus(status);
+
+                if (status) {
+                    if (status.num_epochs > 0) {
+                        setTrainingProgress((status.epoch / status.num_epochs) * 100);
+                        setTrainingStatus(`Cloud Training: Epoch ${status.epoch}/${status.num_epochs} - Loss: ${status.avg_loss?.toFixed(4) ?? 'N/A'}`);
+                    }
+
+                    if (status.status === 'completed' || status.status === 'failed') {
+                        clearInterval(interval);
+                        setIsTraining(false);
+                        if (status.status === 'completed') {
+                            addLog('Cloud training completed!', 'success');
+                            fetchCloudModels(); // Refresh models list
+                        } else {
+                            addLog(`Cloud training failed: ${status.error || 'Unknown error'}`, 'error');
+                        }
+                    }
+                }
+            }, 2000);
+        } else {
+            setIsTraining(false);
+            addLog('Failed to start cloud training.', 'error');
+        }
+    };
+
+    const runCloudInference = useCallback(async () => {
+        if (!sim.current.isInferencing) return;
+
+        const image = captureImage();
+        if (!image) return;
+
+        const imageBase64 = smallCanvasRef.current?.toDataURL('image/jpeg', 0.7).split(',')[1];
+        if (!imageBase64) return;
+
+        const x = sim.current.robotState.x;
+        const z = sim.current.robotState.z;
+        const angle = sim.current.robotState.rotation;
+        const speed = sim.current.robotState.velocity;
+        const targetDist = sim.current.target ? Math.hypot(sim.current.target.position.x - x, sim.current.target.position.z - z) : 0;
+
+        const state = new Array(14).fill(0);
+        state[0] = x;
+        state[1] = z;
+        state[2] = angle;
+        state[3] = speed;
+        state[4] = targetDist;
+        state[5] = sim.current.isColliding ? 1.0 : 0.0;
+
+        const envState = new Array(7).fill(0);
+        envState[0] = x;
+        envState[1] = z;
+        envState[2] = angle;
+        envState[3] = speed;
+        envState[4] = sim.current.isColliding ? 1 : 0;
+        envState[5] = 0; // forwardDist
+        envState[6] = targetDist;
+
+        // Note: runInferenceStep now expects envState as second argument
+        const action = await cloudService.runInferenceStep(state, envState);
+
+        if (!action) {
+            // Inference failed or stopped
+            return;
+        }
+
+        // Handle action based on type (string command or vector)
+        let v = 0;
+        let w = 0;
+        const moveSpeed = 0.1; // Default speed for inference
+        const turnSpeedVal = 0.05;
+
+        if (typeof action === 'string') {
+            // Discrete command string
+            switch (action) {
+                case 'up': v = moveSpeed; break;
+                case 'down': v = -moveSpeed; break;
+                case 'left': w = turnSpeedVal; break;
+                case 'right': w = -turnSpeedVal; break;
+                case 'stop': v = 0; w = 0; break;
+            }
+        } else if (Array.isArray(action)) {
+            // Vector (probabilities or one-hot)
+            // [up, down, left, right, stop]
+            const maxIdx = action.indexOf(Math.max(...action));
+            switch (maxIdx) {
+                case 0: v = moveSpeed; break; // Up
+                case 1: v = -moveSpeed; break; // Down
+                case 2: w = turnSpeedVal; break; // Left
+                case 3: w = -turnSpeedVal; break; // Right
+                case 4: v = 0; w = 0; break; // Stop
+            }
+        }
+
+        sim.current.robotState.velocity = v;
+        sim.current.robotState.angularVelocity = w;
+
+        sim.current.inferenceTimeoutId = setTimeout(runCloudInference, 200); // 5Hz = 200ms
+    }, [captureImage]);
+
+    const startCloudInference = async () => {
+        if (!selectedCloudModel) {
+            addLog('Please select a cloud model.', 'error');
+            return;
+        }
+
+        const success = await cloudService.startInference(selectedCloudModel);
+
+        if (success) {
+            sim.current.isInferencing = true;
+            setIsInferencing(true);
+            addLog('Cloud inference started.', 'success');
+            runCloudInference();
+        } else {
+            addLog('Failed to start cloud inference.', 'error');
+        }
+    };
+
+    const stopInference = useCallback(async () => {
+        sim.current.isInferencing = false;
+        setIsInferencing(false);
+        clearTimeout(sim.current.inferenceTimeoutId);
+
+        if (trainingMode === 'cloud') {
+            const success = await cloudService.stopInference();
+            if (success) {
+                addLog('Cloud inference stopped.', 'warning');
+            }
+        } else {
+            addLog('Inference stopped.', 'warning');
+        }
+    }, [trainingMode, addLog]);
+
+    const startTraining = async () => {
+        if (trainingMode === 'cloud') {
+            startCloudTraining();
+            return;
+        }
+
+        if (sim.current.episodes.length === 0) return;
+
+        sim.current.isTraining = true;
+        setIsTraining(true);
+        setTrainingProgress(0);
+        setTrainingStatus('Preparing data with Action Chunking...');
+
+        addLog(`Initializing ACT training (Chunk Size: ${actService.CHUNK_SIZE})...`, 'info');
+
+        // Prepare Data with Action Chunking
+        const data = actService.prepareTrainingData(sim.current.episodes);
+
+        if (data.imageInputs.length === 0) {
+            addLog('No visual data found in episodes!', 'error');
+            setIsTraining(false);
+            sim.current.isTraining = false;
+            return;
+        }
+
+        // Define ACT Model
+        const model = actService.createModel();
+        sim.current.model = model;
+
+        // Train
+        await actService.trainModel(model, data, (epoch, logs) => {
+            const progress = ((epoch + 1) / 50) * 100;
+            setTrainingProgress(progress);
+            setTrainingStatus(`Epoch ${epoch + 1}/50 - Loss: ${logs?.loss.toFixed(4)}`);
+        });
+
+        finishTraining();
+    };
+
+    const runInference = useCallback(() => {
+        if (!sim.current.isInferencing || !sim.current.model || !sim.current.target) return;
+
+        const { robotState, target, model } = sim.current;
+
+        // Stuck detection logic
+        if (typeof sim.current.lastX === 'undefined') {
+            sim.current.lastX = robotState.x;
+            sim.current.lastZ = robotState.z;
+            sim.current.stuckCounter = 0;
+        }
+
+        const distMoved = Math.sqrt(
+            Math.pow(robotState.x - sim.current.lastX, 2) +
+            Math.pow(robotState.z - sim.current.lastZ, 2)
+        );
+        sim.current.lastX = robotState.x;
+        sim.current.lastZ = robotState.z;
+
+        if (Math.abs(robotState.velocity) > 0.05 && distMoved < 0.005) {
+            sim.current.stuckCounter++;
+        } else {
+            sim.current.stuckCounter = Math.max(0, sim.current.stuckCounter - 1);
+        }
+
+        if (sim.current.stuckCounter > 20) {
+            addLog('Stuck detected! Recovering...', 'warning');
+            robotState.velocity = -0.2;
+            robotState.angularVelocity = (Math.random() - 0.5) * 2.0; // Increased rotation range
+            sim.current.stuckCounter = 0;
+            // Increase recovery time to 1.5s to allow robot to back away fully
+            sim.current.inferenceTimeoutId = setTimeout(runInference, 1500);
+            return;
+        }
+
+        const image = captureImage();
+        if (!image) return;
+
+        const dx = target.position.x - robotState.x;
+        const dz = target.position.z - robotState.z;
+        const targetDist = Math.sqrt(dx * dx + dz * dz);
+
+        const state = new Array(14).fill(0);
+        state[0] = robotState.x;
+        state[1] = robotState.z;
+        state[2] = robotState.rotation;
+        state[3] = robotState.velocity;
+        state[4] = targetDist;
+
+        const prediction = actService.predict(model, image, state);
+
+        // Temporal Ensembling (simplified)
+        if (!sim.current.actionBuffer) sim.current.actionBuffer = [];
+
+        // Parse prediction into chunk
+        const newChunk = [];
+        for (let i = 0; i < actService.CHUNK_SIZE; i++) {
+            newChunk.push({
+                v: prediction[i * 2],
+                w: prediction[i * 2 + 1],
+                weight: Math.exp(-0.5 * i) // Exponential weighting
+            });
+        }
+        sim.current.actionBuffer.push(newChunk);
+
+        // Keep buffer size limited
+        if (sim.current.actionBuffer.length > actService.CHUNK_SIZE) {
+            sim.current.actionBuffer.shift();
+        }
+
+        // Aggregate actions
+        let sumV = 0, sumW = 0, totalWeight = 0;
+
+        sim.current.actionBuffer.forEach((chunk: any[], index: number) => {
+            const offset = sim.current.actionBuffer.length - 1 - index;
+            if (offset < chunk.length) {
+                const action = chunk[offset];
+                sumV += action.v * action.weight;
+                sumW += action.w * action.weight;
+                totalWeight += action.weight;
+            }
+        });
+
+        if (totalWeight > 0) {
+            // Apply slight smoothing to velocity to prevent sudden jumps
+            const targetV = Math.max(-speed, Math.min(speed, sumV / totalWeight));
+            const targetW = Math.max(-turnSpeed, Math.min(turnSpeed, sumW / totalWeight));
+
+            // Simple low-pass filter (alpha = 0.5)
+            robotState.velocity = robotState.velocity * 0.5 + targetV * 0.5;
+            robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetW * 0.5;
+
+            // Log movement periodically (every 200ms)
+            if (!sim.current.lastInferenceLogTime || Date.now() - sim.current.lastInferenceLogTime > 200) {
+                addLog(`Inference Movement: V=${robotState.velocity.toFixed(2)}, W=${robotState.angularVelocity.toFixed(2)}`, 'info');
+                sim.current.lastInferenceLogTime = Date.now();
+            }
+        } else {
+            robotState.velocity = Math.max(-speed, Math.min(speed, prediction[0]));
+            robotState.angularVelocity = Math.max(-turnSpeed, Math.min(turnSpeed, prediction[1]));
+        }
+
+        // Check goal
+        if (targetDist < 1.0) {
+            addLog('Target reached!', 'success');
+            target.position.set(
+                (Math.random() - 0.5) * 12,
+                0.4,
+                (Math.random() - 0.5) * 12
+            );
+            sim.current.actionBuffer = [];
+        }
+
+        // Match training frequency (10Hz = 100ms)
+        sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
+    }, [addLog, captureImage, speed, turnSpeed]);
+
+    const startInference = () => {
+        if (isInferencing) {
+            stopInference();
+            return;
+        }
+
+        if (trainingMode === 'cloud') {
+            startCloudInference();
+        } else {
+            if (!selectedModel) {
+                addLog('No frontend model selected!', 'error');
+                return;
+            }
+
+            sim.current.isInferencing = true;
+            setIsInferencing(true);
+            addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
+            runInference();
+        }
+    };
+
+    const [showManual, setShowManual] = useState(false);
+    const [manualPage, setManualPage] = useState(1);
+
+    return (
+        <div className="h-screen flex flex-col grid-bg text-[#e0e0e0] font-sans overflow-x-hidden bg-[#0a0a0f]">
+            {showManual && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setShowManual(false)}>
+                    <div className="bg-slate-900 border border-slate-700 p-8 rounded-lg max-w-4xl w-full max-h-[85vh] overflow-y-auto relative" onClick={e => e.stopPropagation()}>
+                        <button className="absolute top-4 right-4 text-slate-400 hover:text-white text-xl" onClick={() => setShowManual(false)}>×</button>
+                        
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-bold text-blue-400">
+                                {manualPage === 1 ? '训练手册 - 操作指南' : '训练手册 - 技术文档'}
+                            </h2>
+                            <div className="flex gap-2">
+                                <button 
+                                    className={`px-3 py-1 rounded text-xs ${manualPage === 1 ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                    onClick={() => setManualPage(1)}
+                                >
+                                    操作指南
+                                </button>
+                                <button 
+                                    className={`px-3 py-1 rounded text-xs ${manualPage === 2 ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                    onClick={() => setManualPage(2)}
+                                >
+                                    技术架构
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="text-sm text-slate-300 space-y-6">
+                            {manualPage === 1 ? (
+                                <>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">1. 快速开始</h3>
+                                        <p>本模拟器允许您通过“动作分块（ACT）”技术训练小车自动导航。基本流程如下：</p>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>手动控制</strong>：使用键盘 <kbd className="bg-slate-800 px-1 rounded">WASD</kbd> 或方向键控制小车移动。</li>
+                                            <li><strong>数据采集</strong>：点击“开始采集”，在手动控制的同时记录小车的行为。</li>
+                                            <li><strong>模型训练</strong>：采集足够数据后（建议至少 10 个 Episode），点击“开始训练”。</li>
+                                            <li><strong>自主推理</strong>：训练完成后，在下拉列表中选择模型，点击“启动自主推理”。</li>
+                                        </ul>
+                                    </section>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">2. 训练要求</h3>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>多样性</strong>：从不同位置开始，以不同角度接近目标。</li>
+                                            <li><strong>平滑性</strong>：手动操作时尽量保持平滑，避免剧烈的无意义转向。</li>
+                                            <li><strong>数据量</strong>：建议每个场景采集 15-20 个成功的 Episode。</li>
+                                        </ul>
+                                    </section>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">3. 训练技巧</h3>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>碰撞保护</strong>：开启碰撞保护可以自动过滤掉撞墙的无效数据。</li>
+                                            <li><strong>速度设置</strong>：训练时的速度设置会影响模型的学习。建议先用低速采集，模型稳定后再尝试高速。</li>
+                                            <li><strong>目标距离</strong>：小车距离目标越近，采集到的“冲刺”数据越精准。</li>
+                                        </ul>
+                                    </section>
+                                </>
+                            ) : (
+                                <>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">1. 系统架构</h3>
+                                        <p>本系统基于 React 和 Three.js 构建，采用前端本地训练与推理架构。核心组件包括：</p>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>Three.js 场景渲染</strong>：负责小车、环境、光源和机载摄像头的 3D 渲染。</li>
+                                            <li><strong>TensorFlow.js 模型引擎</strong>：在浏览器端执行 ACT (Action Chunking with Transformers) 模型的训练与推理。</li>
+                                            <li><strong>状态管理</strong>：使用 React Hooks 和 `useRef` 管理仿真状态（机器人位置、速度、动作缓冲区）。</li>
+                                        </ul>
+                                    </section>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">2. ACT 原理与实现</h3>
+                                        <p>ACT (Action Chunking with Transformers) 旨在解决机器人动作预测中的平滑性与多模态问题。</p>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>动作分块 (Action Chunking)</strong>：模型一次预测未来多个时间步的动作序列，而非单一动作，从而显著降低动作抖动。</li>
+                                            <li><strong>Transformer 架构</strong>：利用自注意力机制捕捉动作序列的时序依赖。</li>
+                                            <li><strong>CVAE (条件变分自编码器)</strong>：在训练时建模动作的多模态分布，推理时通过采样实现动作的多样性。</li>
+                                        </ul>
+                                    </section>
+                                    <section className="space-y-3">
+                                        <h3 className="font-bold text-slate-100 text-lg border-b border-slate-800 pb-2">3. 训练与推理细节</h3>
+                                        <p>整个生命周期分为以下阶段：</p>
+                                        <ul className="list-disc pl-5 space-y-2">
+                                            <li><strong>数据预处理</strong>：将图像缩放至 224x224，并对状态向量进行归一化。</li>
+                                            <li><strong>损失函数</strong>：结合 L1 动作损失和 KL 散度（用于 CVAE 潜空间正则化）。</li>
+                                            <li><strong>时间集成 (Temporal Ensembling)</strong>：在推理时，对重叠的动作块进行加权平均，进一步提升平滑度。</li>
+                                        </ul>
+                                    </section>
+                                </>
+                            )}
+                        </div>
+                        
+                        <div className="mt-8 flex justify-between items-center border-t border-slate-800 pt-6">
+                            <span className="text-xs text-slate-500">页码: {manualPage} / 2</span>
+                            <div className="flex gap-4">
+                                {manualPage === 1 ? (
+                                    <button className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded transition-colors" onClick={() => setManualPage(2)}>下一页: 技术架构</button>
+                                ) : (
+                                    <button className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-6 py-2 rounded transition-colors" onClick={() => setManualPage(1)}>上一页: 操作指南</button>
+                                )}
+                                <button className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded transition-colors" onClick={() => setShowManual(false)}>完成</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            <header className="glass-panel border-b border-slate-800 px-6 py-4 flex justify-between items-center z-20">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">🤖</div>
+                    <div>
+                        <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">AKA ACT Simulator</h1>
+                        <p className="text-xs text-slate-400 mono">Action Chunking with Transformers - Educational Edition</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4 text-sm">
+                    <button onClick={() => setShowManual(true)} className="text-blue-400 hover:text-blue-300">训练手册</button>
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700">
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span className="text-slate-300">Simulation Active</span>
+                    </div>
+                    <div className="mono text-xs text-slate-500">60 FPS</div>
+                </div>
+            </header>
+
+            <div className="flex-1 flex overflow-hidden">
+                <aside className="w-80 glass-panel border-r border-slate-800 flex flex-col overflow-y-auto">
+                    <div className="p-4 space-y-6">
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">1. 配置环境</h3>
+                            <div className="space-y-3">
+                                <button
+                                    className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
+                                    onClick={(e) => {
+                                        const content = e.currentTarget.nextElementSibling;
+                                        const chevron = e.currentTarget.querySelector('.chevron');
+                                        if (content && chevron) {
+                                            content.classList.toggle('hidden');
+                                            chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                        }
+                                    }}
+                                >
+                                    <span>场景设置</span>
+                                    <span className="chevron text-[10px]">▼</span>
+                                </button>
+                                <div className="space-y-2 hidden">
+                                    <select value={sceneType} onChange={e => setSceneType(e.target.value)} className="w-full bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                                        <option value="basic">基础场景 (Basic)</option>
+                                        <option value="living_room">客厅场景 (Living Room)</option>
+                                        <option value="classroom">教室场景 (Classroom)</option>
+                                        <option value="tennis_court">网球场 (Tennis Court)</option>
+                                    </select>
+                                    <div className="flex gap-2">
+                                        <select value={sceneSize} onChange={e => setSceneSize(e.target.value)} className="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                                            <option value="small">小尺寸</option>
+                                            <option value="medium">中尺寸</option>
+                                            <option value="large">大尺寸</option>
+                                        </select>
+                                        <select value={sceneComplexity} onChange={e => setSceneComplexity(e.target.value)} className="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                                            <option value="low">低复杂度</option>
+                                            <option value="medium">中复杂度</option>
+                                            <option value="high">高复杂度</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <button
+                                    className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
+                                    onClick={(e) => {
+                                        const content = e.currentTarget.nextElementSibling;
+                                        const chevron = e.currentTarget.querySelector('.chevron');
+                                        if (content && chevron) {
+                                            content.classList.toggle('hidden');
+                                            chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                        }
+                                    }}
+                                >
+                                    <span>光源设置</span>
+                                    <span className="chevron text-[10px]">▼</span>
+                                </button>
+                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 hidden">
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-4">X:</span> <input type="range" min="-30" max="30" value={lightPos.x} onChange={e => setLightPos({ ...lightPos, x: Number(e.target.value) })} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-4">Y:</span> <input type="range" min="5" max="40" value={lightPos.y} onChange={e => setLightPos({ ...lightPos, y: Number(e.target.value) })} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-4">Z:</span> <input type="range" min="-30" max="30" value={lightPos.z} onChange={e => setLightPos({ ...lightPos, z: Number(e.target.value) })} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div
+                                className="flex justify-between items-center cursor-pointer"
+                                onClick={(e) => {
+                                    const content = e.currentTarget.nextElementSibling;
+                                    const chevron = e.currentTarget.querySelector('.chevron');
+                                    if (content && chevron) {
+                                        content.classList.toggle('hidden');
+                                        chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                    }
+                                }}
+                            >
+                                <span className="text-sm font-semibold text-slate-300 uppercase tracking-wider">2. 操控本体</span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); resetRobot(); }}
+                                        className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-2 py-1 rounded transition-all"
+                                        title="复位小车位置"
+                                    >
+                                        ↺ 复位
+                                    </button>
+                                    <span className="chevron text-[10px] text-slate-400">▲</span>
+                                </div>
+                            </div>
+                            <div className="space-y-3">
+                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-8">速度:</span>
+                                        <input type="range" min="0.05" max="0.5" step="0.01" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                        <span className="w-8 text-right">{speed.toFixed(2)}</span>
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-8">转向:</span>
+                                        <input type="range" min="0.01" max="0.2" step="0.01" value={turnSpeed} onChange={(e) => setTurnSpeed(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                        <span className="w-8 text-right">{turnSpeed.toFixed(2)}</span>
+                                    </label>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
+                                    <div></div>
+                                    <button
+                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        onMouseDown={() => sim.current.keys['w'] = true}
+                                        onMouseUp={() => sim.current.keys['w'] = false}
+                                        onMouseLeave={() => sim.current.keys['w'] = false}
+                                        onTouchStart={(e) => { e.preventDefault(); sim.current.keys['w'] = true; }}
+                                        onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['w'] = false; }}
+                                    >
+                                        <span className="text-lg leading-none">↑</span>
+                                        <span className="text-[10px]">W</span>
+                                    </button>
+                                    <div></div>
+                                    <button
+                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        onMouseDown={() => sim.current.keys['a'] = true}
+                                        onMouseUp={() => sim.current.keys['a'] = false}
+                                        onMouseLeave={() => sim.current.keys['a'] = false}
+                                        onTouchStart={(e) => { e.preventDefault(); sim.current.keys['a'] = true; }}
+                                        onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['a'] = false; }}
+                                    >
+                                        <span className="text-lg leading-none">←</span>
+                                        <span className="text-[10px]">A</span>
+                                    </button>
+                                    <button
+                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        onMouseDown={() => sim.current.keys['s'] = true}
+                                        onMouseUp={() => sim.current.keys['s'] = false}
+                                        onMouseLeave={() => sim.current.keys['s'] = false}
+                                        onTouchStart={(e) => { e.preventDefault(); sim.current.keys['s'] = true; }}
+                                        onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['s'] = false; }}
+                                    >
+                                        <span className="text-lg leading-none">↓</span>
+                                        <span className="text-[10px]">S</span>
+                                    </button>
+                                    <button
+                                        className="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600"
+                                        onMouseDown={() => sim.current.keys['d'] = true}
+                                        onMouseUp={() => sim.current.keys['d'] = false}
+                                        onMouseLeave={() => sim.current.keys['d'] = false}
+                                        onTouchStart={(e) => { e.preventDefault(); sim.current.keys['d'] = true; }}
+                                        onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['d'] = false; }}
+                                    >
+                                        <span className="text-lg leading-none">→</span>
+                                        <span className="text-[10px]">D</span>
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-slate-500 text-center">使用键盘 WASD 或方向键控制</p>
+                            </div>
+                        </div>
+                        {/* <div className="bg-slate-900/50 p-1 rounded-lg flex text-xs font-medium border border-slate-800">
+                            <button
+                                onClick={() => setTrainingMode('frontend')}
+                                className={`flex-1 py-1.5 rounded-md transition-all ${trainingMode === 'frontend' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:text-slate-300'}`}
+                            >
+                                浏览器训练
+                            </button>
+                            <button
+                                onClick={() => setTrainingMode('cloud')}
+                                className={`flex-1 py-1.5 rounded-md transition-all ${trainingMode === 'cloud' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'text-slate-400 hover:text-slate-300'}`}
+                            >
+                                服务器训练
+                            </button>
+                        </div> */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                                {/* <span className={`w-2 h-2 rounded-full bg-red-500 ${isRecording ? 'recording-pulse opacity-100' : 'opacity-30'}`}></span> */}
+                                3. 采集数据
+                            </h3>
+                            <div className="flex gap-2">
+                                <button onClick={toggleRecording} className={`flex-1 ${isRecording ? 'bg-red-600/40' : 'bg-red-600/20'} hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2`}>
+                                    <span className={`w-2 h-2 rounded-full bg-red-500 ${isRecording ? 'recording-pulse' : ''}`}></span>
+                                    {isRecording ? '停止采集' : '开始采集'}
+                                </button>
+                            </div>
+                            <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={enableCollisionProtection}
+                                    onChange={e => setEnableCollisionProtection(e.target.checked)}
+                                    className="w-4 h-4 rounded bg-slate-800 border-slate-700 accent-blue-500"
+                                />
+                                <span>开启碰撞保护 (撞墙自动停止)</span>
+                            </label>
+                            <div className="text-xs text-slate-400 mono bg-slate-900/50 p-2 rounded border border-slate-800">
+                                <div>Episodes: <span className="text-blue-400">{episodesCount}</span></div>
+                                <div>Frames: <span className="text-blue-400">{frameCount}</span></div>
+                                <div>Actions: <span className="text-blue-400">{actionCount}</span></div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={saveDataset} disabled={episodesCount === 0} className={`flex-1 ${trainingMode === 'cloud' ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'} border border-slate-600 py-2 rounded-lg text-sm transition-all disabled:opacity-50`}>
+                                    {trainingMode === 'cloud' ? '上传 (Upload)' : '保存 (Save)'}
+                                </button>
+                                <label className="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded-lg text-sm transition-all flex items-center justify-center">
+                                    导入 (Import)
+                                    <input type="file" accept=".json" onChange={handleImportDataset} className="hidden" />
+                                </label>
+                            </div>
+                        </div>
+                        {trainingMode === 'cloud' && (
+                            <div className="space-y-3 p-3 bg-purple-900/10 border border-purple-500/20 rounded-lg">
+                                <h3 className="text-xs font-semibold text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                                    ☁️ 云端配置
+                                </h3>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs text-slate-400 block">选择数据集</label>
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={selectedCloudDataset}
+                                            onChange={e => setSelectedCloudDataset(e.target.value)}
+                                            className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-purple-500"
+                                        >
+                                            <option value="">-- Select Dataset --</option>
+                                            {cloudDatasets.map((ds, i) => (
+                                                // id 去掉前14位，只显示后10位
+                                                <option key={i} value={ds.path}>{ds.id.slice(-20)} ({(ds.size_bytes / 1024).toFixed(1)} KB)</option>
+                                            ))}
+                                        </select>
+                                        <button onClick={fetchCloudDatasets} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">
+                                            ↻
+                                        </button>
+                                    </div>
+                                </div>
+
+
+
+                                {cloudTrainingStatus && (
+                                    <div className="text-[10px] mono bg-black/30 p-2 rounded border border-purple-500/10 text-purple-300">
+                                        Status: {cloudTrainingStatus.status}<br />
+                                        Epoch: {cloudTrainingStatus.epoch}/{cloudTrainingStatus.num_epochs}<br />
+                                        Loss: {cloudTrainingStatus.avg_loss?.toFixed(4) ?? 'N/A'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                                4. 训练模型
+                            </h3>
+                            <button
+                                onClick={startTraining}
+                                disabled={trainingMode === 'cloud' ? !selectedCloudDataset : (episodesCount === 0 || isTraining)}
+                                className={`w-full ${trainingMode === 'cloud' ? 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500' : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500'} text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50`}
+                            >
+                                {trainingMode === 'cloud' ? '开始云端训练' : '开始训练模型'}
+                            </button>
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs text-slate-400">
+                                    <span>{isTraining ? '训练中' : '等待训练'}</span>
+                                    <span>{Math.floor(trainingProgress)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                    <div className="h-full training-bar" style={{ width: `${trainingProgress}%` }}></div>
+                                </div>
+                                <div className="text-xs text-slate-500 mono">{trainingStatus}</div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">5. 执行推理</h3>
+
+                            {trainingMode === 'cloud' ? (
+                                <div className="text-xs text-purple-300 bg-purple-900/20 p-2 rounded border border-purple-500/20 mb-2">
+                                    <div className="font-bold mb-2">选择模型</div>
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={selectedCloudModel}
+                                            onChange={e => setSelectedCloudModel(e.target.value)}
+                                            className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-purple-500"
+                                        >
+                                            <option value="">-- Select Model --</option>
+                                            {cloudModels.map((m, i) => (
+                                                <option key={i} value={m.id}>{m.id}</option>
+                                            ))}
+                                        </select>
+                                        <button onClick={fetchCloudModels} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs">
+                                            ↻
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <select 
+                                    className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
+                                    value={selectedModel}
+                                    onChange={e => setSelectedModel(e.target.value)}
+                                >
+                                    <option value="">选择训练好的模型...</option>
+                                    {trainedModels.map((model, i) => (
+                                        <option key={i} value={model.name}>{model.name} (Ready)</option>
+                                    ))}
+                                </select>
+                            )}
+
+                            <button
+                                onClick={startInference}
+                                disabled={trainingMode === 'cloud' ? !selectedCloudModel : !selectedModel}
+                                className={`w-full ${isInferencing ? 'bg-red-600/20 text-red-400 border-red-500/30 hover:bg-red-600/30' : 'bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30'} border py-2 rounded-lg font-medium transition-all disabled:opacity-50`}
+                            >
+                                {isInferencing ? '停止推理' : (trainingMode === 'cloud' ? '启动云端推理' : '启动自主推理')}
+                            </button>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                <input type="checkbox" id="show-attention" checked={showAttention} onChange={(e) => setShowAttention(e.target.checked)} className="rounded bg-slate-800 border-slate-600" />
+                                <label htmlFor="show-attention">显示注意力热力<span onClick={() => setTrainingMode(trainingMode === 'frontend' ? 'cloud' : 'frontend')}>图</span></label>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                <main className="flex-1 relative bg-slate-950">
+                    <div ref={canvasContainerRef} className="absolute inset-0"></div>
+
+                    <div className="absolute top-4 left-4 glass-panel rounded-lg p-3 text-xs mono space-y-1 pointer-events-none">
+                        <div className="text-slate-400">Position: <span ref={posXRef} className="text-blue-400">0.00</span>, <span ref={posZRef} className="text-blue-400">0.00</span></div>
+                        <div className="text-slate-400">Rotation: <span ref={rotYRef} className="text-purple-400">0°</span></div>
+                        <div className="text-slate-400">Velocity: <span ref={velocityRef} className="text-green-400">0.0</span> m/s</div>
+                    </div>
+
+                    <div className={`absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border ${isTraining ? 'text-blue-400 border-blue-500/30' : isInferencing ? 'text-purple-400 border-purple-500/30 recording-pulse' : trainedModel && !isInferencing ? 'text-green-400 border-green-500/30' : 'text-slate-300 border-slate-700'}`}>
+                        {isTraining ? '训练中...' : isInferencing ? 'ACT 自主推理中' : trainedModel && !isInferencing ? '训练完成' : '手动控制模式'}
+                    </div>
+                </main>
+
+                <aside className="w-96 glass-panel border-l border-slate-800 flex flex-col">
+                    <div className="h-48 camera-feed border-b border-slate-800 relative">
+                        <canvas ref={cameraCanvasRef} className="w-full h-full object-cover"></canvas>
+                        <div className="absolute top-2 left-2 text-xs mono text-green-400 bg-black/50 px-2 py-1 rounded">CAM_01 (Onboard)</div>
+                        <div className="absolute bottom-2 right-2 text-xs text-slate-500">30 FPS</div>
+
+                        <div className={`absolute inset-0 attention-heatmap pointer-events-none transition-opacity duration-300 ${showAttention ? 'opacity-100' : 'opacity-0'}`}></div>
+                    </div>
+
+                    <div className="h-32 border-b border-slate-800 p-3 bg-slate-900/30">
+                        <h4 className="text-xs font-semibold text-slate-400 mb-2 uppercase">Action Chunking (ACT)</h4>
+                        <div className="flex items-end gap-1 h-16">
+                            {actionChunks.length > 0 ? actionChunks.map((act, idx) => {
+                                const colors = ['bg-slate-700', 'bg-blue-500', 'bg-blue-400', 'bg-purple-500', 'bg-purple-400'];
+                                return (
+                                    <div key={idx} className={`flex-1 ${colors[act]} rounded-t transition-all duration-300`} style={{ height: `${20 + Math.random() * 60}%`, opacity: 1 - (idx * 0.1) }}></div>
+                                );
+                            }) : (
+                                <div className="flex-1 bg-slate-800 rounded-t text-center text-[10px] text-slate-600 pt-2">Waiting...</div>
+                            )}
+                        </div>
+                        <div className="flex justify-between text-[10px] text-slate-600 mt-1 mono">
+                            <span>t+0</span>
+                            <span>t+4</span>
+                            <span>t+8</span>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col min-h-0">
+                        <div className="p-3 border-b border-slate-800 flex justify-between items-center">
+                            <h4 className="text-xs font-semibold text-slate-400 uppercase">System Logs</h4>
+                            <button onClick={clearLogs} className="text-[10px] text-slate-600 hover:text-slate-400">Clear</button>
+                        </div>
+                        <div ref={logContainerRef} className="flex-1 overflow-y-auto p-3 space-y-1 text-[10px] mono">
+                            {logs.map((log, i) => (
+                                <div key={i} className={`log-entry log-${log.type}`}>
+                                    [{log.time}] {log.message}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    );
+}
