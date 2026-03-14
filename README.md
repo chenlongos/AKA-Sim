@@ -1,6 +1,6 @@
 # AKA-Sim 阿卡0号开源机器人
 
-AKA-Sim 是一个功能完整的开源机器人项目，支持实体机器人控制、模拟环境训练和 ACT (Action Chunking Transformer) 策略学习。
+AKA-Sim 是一个用于模拟环境训练和 ACT (Action Chunking Transformer) 策略学习的平台。
 
 ## 功能特性
 
