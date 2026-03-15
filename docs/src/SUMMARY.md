@@ -6,12 +6,6 @@
 
 ## 项目介绍
 
-- [Chapter 1]()
-
-- [使用sg2002](./chapter_2.md)
-
-- [运行程序](./init.md)
-
-- [本地项目启动](./start.md)
+- [本地项目启动方式](./start.md)
 
 - [API 文档](./api.md)
