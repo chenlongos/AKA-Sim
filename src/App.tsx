@@ -19,13 +19,17 @@ export default function App() {
     const [actionCount, setActionCount] = useState(0);
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [trainingStatus, setTrainingStatus] = useState('');
-    const [trainedModels, setTrainedModels] = useState<{ name: string }[]>([]);
-    const [selectedModel, setSelectedModel] = useState<string>('');
+    const [trainedModels, setTrainedModels] = useState<{ name: string }[]>([
+        { name: '跟随网球示例' },
+        { name: '自动避障示例' }
+    ]);
+    const [selectedModel, setSelectedModel] = useState<string>('跟随网球示例');
     const [trainedModel, setTrainedModel] = useState<{ name: string } | null>(null);
     const [showAttention, setShowAttention] = useState(false);
     const [sceneType, setSceneType] = useState(() => localStorage.getItem('sceneType') || 'basic');
     const [sceneSize, setSceneSize] = useState(() => localStorage.getItem('sceneSize') || 'medium');
     const [sceneComplexity, setSceneComplexity] = useState(() => localStorage.getItem('sceneComplexity') || 'low');
+    const [hasArm, setHasArm] = useState(() => localStorage.getItem('hasArm') === 'true');
     const [lightPos, setLightPos] = useState(() => {
         const saved = localStorage.getItem('lightPos');
         return saved ? JSON.parse(saved) : { x: 10, y: 20, z: 10 };
@@ -43,10 +47,11 @@ export default function App() {
         localStorage.setItem('sceneType', sceneType);
         localStorage.setItem('sceneSize', sceneSize);
         localStorage.setItem('sceneComplexity', sceneComplexity);
+        localStorage.setItem('hasArm', hasArm.toString());
         localStorage.setItem('lightPos', JSON.stringify(lightPos));
         localStorage.setItem('speed', speed.toString());
         localStorage.setItem('turnSpeed', turnSpeed.toString());
-    }, [sceneType, sceneSize, sceneComplexity, lightPos, speed, turnSpeed]);
+    }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed]);
 
     // Cloud Training State
     const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
@@ -68,7 +73,7 @@ export default function App() {
 
     // Simulation State
     const sim = useRef({
-        robotState: { x: 0, z: 0, rotation: 0, velocity: 0, angularVelocity: 0 },
+        robotState: { x: 0, z: 0, rotation: Math.PI, velocity: 0, angularVelocity: 0 },
         isRecording: false,
         isTraining: false,
         isInferencing: false,
@@ -80,6 +85,9 @@ export default function App() {
         dirLight: null as THREE.DirectionalLight | null,
         plane: null as THREE.Mesh | null,
         robot: null as THREE.Group | null,
+        armGroup: null as THREE.Group | null,
+        arm: null as any,
+        wheels: [] as THREE.Group[],
         camera: null as THREE.PerspectiveCamera | null,
         scene: null as THREE.Scene | null,
         renderer: null as THREE.WebGLRenderer | null,
@@ -98,11 +106,29 @@ export default function App() {
         lastManualLogTime: 0
     });
 
+    const isAtBottom = useRef(true);
+    const isDragging = useRef(false);
+    const raycaster = useRef(new THREE.Raycaster());
+    const mouse = useRef(new THREE.Vector2());
+
+    const handleLogScroll = () => {
+        if (logContainerRef.current) {
+            const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
+            isAtBottom.current = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+        }
+    };
+
+    useEffect(() => {
+        if (isAtBottom.current && logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [logs]);
+
     const addLog = useCallback((message: string, type = 'info') => {
         setLogs(prev => {
-            const newLogs = [{ message, type, time: new Date().toLocaleTimeString() }, ...prev];
+            const newLogs = [...prev, { message, type, time: new Date().toLocaleTimeString() }];
             if (newLogs.length > 200) {
-                return newLogs.slice(0, 200);
+                return newLogs.slice(-200);
             }
             return newLogs;
         });
@@ -142,12 +168,97 @@ export default function App() {
         sim.current.environmentGroup = environmentGroup;
 
         // Robot
-        const { robot, onboardCamera, onboardRenderTarget } = createRobot(scene);
+        const { robot, onboardCamera, onboardRenderTarget, wheelMeshes, armGroup, lowerArm, elbow, wrist, gripper } = createRobot(scene);
         sim.current.robot = robot;
+        sim.current.armGroup = armGroup;
+        sim.current.arm = {
+            lowerArm, elbow, wrist, gripper,
+            state: 'idle',
+            grabbedObject: null,
+            targetRotations: { lowerArm: Math.PI/4, elbow: Math.PI/2.5, wrist: -Math.PI/6 }
+        };
+        sim.current.wheels = wheelMeshes;
         sim.current.onboardCamera = onboardCamera;
         sim.current.onboardRenderTarget = onboardRenderTarget;
+        
+        robot.rotation.y = Math.PI;
 
         scene.add(robot);
+
+        // Dragging Logic
+        const onMouseDown = (event: MouseEvent) => {
+            if (!container || !sim.current.camera || !sim.current.target) return;
+            
+            const rect = container.getBoundingClientRect();
+            mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
+            mouse.current.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
+            
+            raycaster.current.setFromCamera(mouse.current, sim.current.camera);
+            const intersects = raycaster.current.intersectObject(sim.current.target);
+            
+            if (intersects.length > 0) {
+                isDragging.current = true;
+                if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
+            }
+        };
+
+        const onMouseMove = (event: MouseEvent) => {
+            if (!container || !sim.current.camera || !sim.current.target) return;
+
+            const rect = container.getBoundingClientRect();
+            mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
+            mouse.current.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
+
+            raycaster.current.setFromCamera(mouse.current, sim.current.camera);
+
+            if (!isDragging.current) {
+                const intersects = raycaster.current.intersectObject(sim.current.target);
+                if (renderer.domElement) {
+                    renderer.domElement.style.cursor = intersects.length > 0 ? 'grab' : 'default';
+                }
+                return;
+            }
+
+            if (!sim.current.plane) return;
+            
+            const intersects = raycaster.current.intersectObject(sim.current.plane);
+            
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                sim.current.target.position.x = point.x;
+                sim.current.target.position.z = point.z;
+            }
+        };
+
+        const onMouseUp = () => {
+            isDragging.current = false;
+            if (renderer.domElement) renderer.domElement.style.cursor = 'default';
+        };
+
+        const onTouchStart = (event: TouchEvent) => {
+            if (event.touches.length > 0) {
+                const touch = event.touches[0];
+                onMouseDown({ clientX: touch.clientX, clientY: touch.clientY } as MouseEvent);
+            }
+        };
+
+        const onTouchMove = (event: TouchEvent) => {
+            if (event.touches.length > 0) {
+                const touch = event.touches[0];
+                onMouseMove({ clientX: touch.clientX, clientY: touch.clientY } as MouseEvent);
+            }
+        };
+
+        const onTouchEnd = () => {
+            onMouseUp();
+        };
+
+        renderer.domElement.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+        renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', onTouchEnd);
 
         // Resize handler
         const onWindowResize = () => {
@@ -166,6 +277,12 @@ export default function App() {
             }
         };
     }, [addLog]);
+
+    useEffect(() => {
+        if (sim.current.armGroup) {
+            sim.current.armGroup.visible = hasArm;
+        }
+    }, [hasArm]);
 
     useEffect(() => {
         if (sim.current.dirLight) {
@@ -342,7 +459,7 @@ export default function App() {
         const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
         const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
         const ball = new THREE.Mesh(ballGeo, ballMat);
-        ball.position.set(-halfSize / 2 + 1.5, 0.25, halfSize / 2 - 1.5);
+        ball.position.set(0, 0.25, -5);
         ball.castShadow = true;
         ball.userData = { w: 0.5, d: 0.5 };
         group.add(ball);
@@ -484,7 +601,7 @@ export default function App() {
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
             sim.current.keys[key] = true;
-            if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+            if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
                 e.preventDefault();
             }
         };
@@ -526,6 +643,8 @@ export default function App() {
         if (v < 0) newActiveKeys['s'] = true;
         if (w > 0) newActiveKeys['a'] = true;
         if (w < 0) newActiveKeys['d'] = true;
+        if (keys['q']) newActiveKeys['q'] = true;
+        if (keys['e']) newActiveKeys['e'] = true;
         
         setActiveKeys(prev => {
             const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
@@ -582,6 +701,16 @@ export default function App() {
             robot.position.x = state.x;
             robot.position.z = state.z;
             robot.rotation.y = state.rotation;
+            
+            if (sim.current.wheels && sim.current.wheels.length === 2) {
+                const wheelRadius = 0.3;
+                const rotationAmount = state.velocity / wheelRadius;
+                // Also add differential rotation for turning
+                const turnRotation = state.angularVelocity * 0.5 / wheelRadius;
+                
+                sim.current.wheels[0].rotateY(-rotationAmount - turnRotation); // Right wheel
+                sim.current.wheels[1].rotateY(-rotationAmount + turnRotation); // Left wheel
+            }
         }
 
         if (camera) {
@@ -605,9 +734,9 @@ export default function App() {
         const dirZ = Math.cos(robotState.rotation);
 
         onboardCamera.position.set(
-            robotState.x + dirX * 0.9,
+            robotState.x + dirX * 0.85,
             0.7,
-            robotState.z + dirZ * 0.8
+            robotState.z + dirZ * 0.85
         );
 
         onboardCamera.lookAt(
@@ -646,17 +775,105 @@ export default function App() {
         ctx.putImageData(imageData, 0, 0);
     }, []);
 
+    const updateArm = useCallback(() => {
+        if (!sim.current.arm || !hasArm) return;
+        const arm = sim.current.arm;
+
+        // Handle inputs
+        if (sim.current.keys['q']) {
+            sim.current.keys['q'] = false;
+            if (arm.state === 'idle') {
+                // Find object
+                const robotPos = sim.current.robot!.position.clone();
+                const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(sim.current.robot!.quaternion);
+                const grabPos = robotPos.clone().add(forward.multiplyScalar(1.5));
+
+                let closestObj = null;
+                let minDistance = 1.5;
+
+                for (const obj of sim.current.walls) {
+                    if (obj.geometry.type === 'SphereGeometry' || obj.userData.isGrabbable) {
+                        const dist = obj.position.distanceTo(grabPos);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            closestObj = obj;
+                        }
+                    }
+                }
+
+                if (closestObj) {
+                    arm.grabbedObject = closestObj;
+                    arm.state = 'picking_down';
+                    arm.targetRotations = { lowerArm: Math.PI/2.2, elbow: Math.PI/4, wrist: Math.PI/4 };
+                    addLog('Picking up object...', 'info');
+                } else {
+                    addLog('No object in range to pick up', 'warn');
+                }
+            }
+        }
+
+        if (sim.current.keys['e']) {
+            sim.current.keys['e'] = false;
+            if (arm.state === 'holding') {
+                arm.state = 'dropping_down';
+                arm.targetRotations = { lowerArm: Math.PI/2.2, elbow: Math.PI/4, wrist: Math.PI/4 };
+                addLog('Dropping object...', 'info');
+            }
+        }
+
+        // Animate joints
+        arm.lowerArm.rotation.x += (arm.targetRotations.lowerArm - arm.lowerArm.rotation.x) * 0.1;
+        arm.elbow.rotation.x += (arm.targetRotations.elbow - arm.elbow.rotation.x) * 0.1;
+        arm.wrist.rotation.x += (arm.targetRotations.wrist - arm.wrist.rotation.x) * 0.1;
+
+        // State machine transitions
+        const isAtTarget = 
+            Math.abs(arm.lowerArm.rotation.x - arm.targetRotations.lowerArm) < 0.05 &&
+            Math.abs(arm.elbow.rotation.x - arm.targetRotations.elbow) < 0.05 &&
+            Math.abs(arm.wrist.rotation.x - arm.targetRotations.wrist) < 0.05;
+
+        if (isAtTarget) {
+            if (arm.state === 'picking_down') {
+                if (arm.grabbedObject) {
+                    arm.gripper.add(arm.grabbedObject);
+                    arm.grabbedObject.position.set(0, 0.35, 0);
+                }
+                arm.state = 'picking_up';
+                arm.targetRotations = { lowerArm: -Math.PI/6, elbow: Math.PI/1.5, wrist: -Math.PI/4 };
+            } else if (arm.state === 'picking_up') {
+                arm.state = 'holding';
+                addLog('Object picked up', 'success');
+            } else if (arm.state === 'dropping_down') {
+                if (arm.grabbedObject) {
+                    const worldPos = new THREE.Vector3();
+                    arm.grabbedObject.getWorldPosition(worldPos);
+                    sim.current.environmentGroup!.add(arm.grabbedObject);
+                    arm.grabbedObject.position.copy(worldPos);
+                    // Drop to ground level
+                    arm.grabbedObject.position.y = 0.25;
+                    arm.grabbedObject = null;
+                }
+                arm.state = 'dropping_up';
+                arm.targetRotations = { lowerArm: Math.PI/4, elbow: Math.PI/2.5, wrist: -Math.PI/6 };
+            } else if (arm.state === 'dropping_up') {
+                arm.state = 'idle';
+                addLog('Object dropped', 'success');
+            }
+        }
+    }, [hasArm, addLog]);
+
     const animate = useCallback(() => {
         sim.current.animationFrameId = requestAnimationFrame(animate);
 
         updateRobotMovement();
         updatePhysics();
         updateOnboardCamera();
+        updateArm();
 
         if (sim.current.renderer && sim.current.scene && sim.current.camera) {
             sim.current.renderer.render(sim.current.scene, sim.current.camera);
         }
-    }, [updateRobotMovement, updatePhysics, updateOnboardCamera]);
+    }, [updateRobotMovement, updatePhysics, updateOnboardCamera, updateArm]);
 
     useEffect(() => {
         sim.current.animationFrameId = requestAnimationFrame(animate);
@@ -687,7 +904,7 @@ export default function App() {
     const resetRobot = () => {
         sim.current.robotState.x = 0;
         sim.current.robotState.z = 0;
-        sim.current.robotState.rotation = 0;
+        sim.current.robotState.rotation = Math.PI;
         sim.current.robotState.velocity = 0;
         sim.current.robotState.angularVelocity = 0;
         setActiveKeys({});
@@ -695,10 +912,14 @@ export default function App() {
 
         if (sim.current.robot) {
             sim.current.robot.position.set(0, 0, 0);
-            sim.current.robot.rotation.y = 0;
+            sim.current.robot.rotation.y = Math.PI;
         }
 
-        addLog('Robot position reset to origin', 'warning');
+        if (sim.current.target) {
+            sim.current.target.position.set(0, 0.25, -5);
+        }
+
+        addLog('Robot and target reset', 'warning');
     };
 
     const saveDataset = () => {
@@ -727,6 +948,14 @@ export default function App() {
         a.click();
 
         addLog('Dataset downloaded successfully', 'success');
+    };
+
+    const clearDataset = () => {
+        sim.current.episodes = [];
+        setEpisodesCount(0);
+        setFrameCount(0);
+        setActionCount(0);
+        addLog('Dataset cleared.', 'info');
     };
 
     const handleImportDataset = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -761,10 +990,147 @@ export default function App() {
         reader.readAsText(file);
     };
 
-    const finishTraining = useCallback(() => {
+    const loadTrainedModels = useCallback(async () => {
+        try {
+            const models = await tf.io.listModels();
+            const loadedModels = Object.keys(models)
+                .filter(key => key.startsWith('indexeddb://'))
+                .map(key => ({ name: key.replace('indexeddb://', '') }));
+            
+            setTrainedModels([
+                { name: '跟随网球示例' },
+                { name: '自动避障示例' },
+                ...loadedModels
+            ]);
+        } catch (err) {
+            console.error('Failed to load models from IndexedDB', err);
+        }
+    }, []);
+
+    const handleExportModels = async () => {
+        const modelsToExport = trainedModels.filter(m => !m.name.endsWith('示例'));
+        if (modelsToExport.length === 0) {
+            addLog('No user-trained models to export.', 'warning');
+            return;
+        }
+        addLog('Preparing models for export...', 'info');
+        try {
+            const JSZip = (await import('jszip')).default;
+            const zip = new JSZip();
+            
+            for (const modelInfo of modelsToExport) {
+                const modelName = modelInfo.name;
+                const model = await tf.loadLayersModel('indexeddb://' + modelName);
+                
+                await model.save(tf.io.withSaveHandler(async (artifacts) => {
+                    const folder = zip.folder(modelName);
+                    if (folder) {
+                        folder.file(`${modelName}.json`, JSON.stringify({
+                            modelTopology: artifacts.modelTopology,
+                            format: artifacts.format,
+                            generatedBy: artifacts.generatedBy,
+                            convertedBy: artifacts.convertedBy,
+                            weightsManifest: [{
+                                paths: [`${modelName}.weights.bin`],
+                                weights: artifacts.weightSpecs
+                            }]
+                        }));
+                        if (artifacts.weightData) {
+                            let data: ArrayBuffer;
+                            if (Array.isArray(artifacts.weightData)) {
+                                const totalLength = artifacts.weightData.reduce((acc, val) => acc + val.byteLength, 0);
+                                const tmp = new Uint8Array(totalLength);
+                                let offset = 0;
+                                for (const buf of artifacts.weightData) {
+                                    tmp.set(new Uint8Array(buf), offset);
+                                    offset += buf.byteLength;
+                                }
+                                data = tmp.buffer;
+                            } else {
+                                data = artifacts.weightData;
+                            }
+                            folder.file(`${modelName}.weights.bin`, data);
+                        }
+                    }
+                    return { modelArtifactsInfo: { dateSaved: new Date(), modelTopologyType: 'JSON' } };
+                }));
+            }
+            
+            const blob = await zip.generateAsync({ type: 'blob' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `lerobot_models_${Date.now()}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+            addLog('Models exported successfully.', 'success');
+        } catch (err) {
+            console.error('Export failed:', err);
+            addLog('Failed to export models.', 'error');
+        }
+    };
+
+    const handleImportModelsFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        addLog('Importing models...', 'info');
+        const modelFiles: Record<string, { json?: File, bin?: File }> = {};
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const parts = file.webkitRelativePath.split('/');
+            if (parts.length < 2) continue;
+
+            const fileName = file.name;
+            const modelName = parts[parts.length - 2];
+
+            if (!modelFiles[modelName]) modelFiles[modelName] = {};
+
+            if (fileName.endsWith('.json')) {
+                modelFiles[modelName].json = file;
+            } else if (fileName.endsWith('.bin')) {
+                modelFiles[modelName].bin = file;
+            }
+        }
+
+        let importCount = 0;
+        for (const [modelName, pair] of Object.entries(modelFiles)) {
+            if (pair.json && pair.bin) {
+                try {
+                    const model = await tf.loadLayersModel(tf.io.browserFiles([pair.json, pair.bin]));
+                    await model.save('indexeddb://' + modelName);
+                    importCount++;
+                } catch (err) {
+                    console.error(`Failed to import model ${modelName}:`, err);
+                    addLog(`Failed to import ${modelName}`, 'error');
+                }
+            }
+        }
+
+        if (importCount > 0) {
+            addLog(`Successfully imported ${importCount} models.`, 'success');
+            loadTrainedModels();
+        } else {
+            addLog('No valid models found in the selected folder.', 'warning');
+        }
+        
+        e.target.value = '';
+    };
+
+    const finishTraining = useCallback(async () => {
         sim.current.isTraining = false;
         setIsTraining(false);
         const newModelName = `ACT_Model_v${trainedModels.length + 1}`;
+        
+        if (sim.current.model) {
+            try {
+                await sim.current.model.save(`indexeddb://${newModelName}`);
+            } catch (err) {
+                console.error('Failed to save model to IndexedDB', err);
+            }
+        }
+
         const newModel = { name: newModelName };
         setTrainedModels(prev => [...prev, newModel]);
         setTrainedModel(newModel);
@@ -1052,13 +1418,166 @@ export default function App() {
             setTrainingStatus(`Epoch ${epoch + 1}/50 - Loss: ${logs?.loss.toFixed(4)}`);
         });
 
-        finishTraining();
+        await finishTraining();
     };
 
     const runInference = useCallback(() => {
-        if (!sim.current.isInferencing || !sim.current.model || !sim.current.target) return;
+        if (!sim.current.isInferencing || !sim.current.target) return;
 
         const { robotState, target, model } = sim.current;
+
+        if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例') {
+            let targetSpeed = 0;
+            let targetTurn = 0;
+
+            if (selectedModel === '跟随网球示例') {
+                const dirX = Math.sin(robotState.rotation);
+                const dirZ = Math.cos(robotState.rotation);
+                
+                // Calculate from camera position (0.85 units forward) to match visual FOV
+                const camX = robotState.x + dirX * 0.85;
+                const camZ = robotState.z + dirZ * 0.85;
+                
+                const dx = target.position.x - camX;
+                const dz = target.position.z - camZ;
+                const distance = Math.sqrt(dx * dx + dz * dz);
+                
+                const targetAngle = Math.atan2(dx, dz);
+                let angleDiff = targetAngle - robotState.rotation;
+                
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                // Camera horizontal FOV is ~96 degrees (48 left/right). Use 45 degrees for strict visibility.
+                const FOV = Math.PI / 4; 
+                let isVisible = Math.abs(angleDiff) <= FOV;
+
+                // Check for obstacles blocking the view
+                if (isVisible && distance > 1.0) {
+                    const steps = Math.floor(distance / 0.5);
+                    const stepX = dx / steps;
+                    const stepZ = dz / steps;
+                    let px = camX;
+                    let pz = camZ;
+                    
+                    for (let i = 1; i < steps; i++) {
+                        px += stepX;
+                        pz += stepZ;
+                        for (const wall of sim.current.walls) {
+                            if (wall === target) continue;
+                            const w = wall.userData.w;
+                            const depth = wall.userData.d;
+                            const wx = wall.position.x;
+                            const wz = wall.position.z;
+                            if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
+                                isVisible = false;
+                                break;
+                            }
+                        }
+                        if (!isVisible) break;
+                    }
+                }
+
+                if (distance <= 1.5 && isVisible) {
+                    // Reached the ball and it's visible: stop completely, no jittering
+                    targetSpeed = 0;
+                    targetTurn = 0;
+                } else if (!isVisible) {
+                    // Ball out of FOV or blocked: rotate in place to search
+                    targetSpeed = 0;
+                    targetTurn = turnSpeed;
+                } else {
+                    // Ball in FOV: track and approach
+                    // Use a smaller multiplier for smoother turning
+                    targetTurn = angleDiff * 1.0;
+                    
+                    // Cap the turn speed to prevent violent swings
+                    targetTurn = Math.max(-turnSpeed * 1.5, Math.min(turnSpeed * 1.5, targetTurn));
+                    
+                    // Smooth speed approach
+                    targetSpeed = Math.min(speed, (distance - 1.5) * 0.5);
+                    
+                    // If the angle is too large, slow down to turn
+                    if (Math.abs(angleDiff) > Math.PI / 6) {
+                        targetSpeed *= 0.5;
+                    }
+                }
+            } else if (selectedModel === '自动避障示例') {
+                const checkDistance = (angleOffset: number) => {
+                    const checkAngle = robotState.rotation + angleOffset;
+                    const dirX = Math.sin(checkAngle);
+                    const dirZ = Math.cos(checkAngle);
+                    
+                    let minDist = 5; // max lookahead
+                    const robotRadius = 1.0; // slightly larger for safety
+
+                    for (const wall of sim.current.walls) {
+                        for (let d = 0.5; d < minDist; d += 0.5) {
+                            const px = robotState.x + dirX * d;
+                            const pz = robotState.z + dirZ * d;
+                            
+                            const w = wall.userData.w;
+                            const depth = wall.userData.d;
+                            const wx = wall.position.x;
+                            const wz = wall.position.z;
+                            
+                            if (px > wx - w/2 - robotRadius && px < wx + w/2 + robotRadius &&
+                                pz > wz - depth/2 - robotRadius && pz < wz + depth/2 + robotRadius) {
+                                minDist = d;
+                                break;
+                            }
+                        }
+                    }
+                    return minDist;
+                };
+
+                const distFront = checkDistance(0);
+                const distLeft = checkDistance(Math.PI / 4);
+                const distRight = checkDistance(-Math.PI / 4);
+
+                targetSpeed = speed * 0.8;
+                targetTurn = 0;
+
+                if (distFront < 3) {
+                    targetSpeed = 0; 
+                    if (distLeft > distRight) {
+                        targetTurn = turnSpeed;
+                    } else {
+                        targetTurn = -turnSpeed;
+                    }
+                    if (distLeft < 2 && distRight < 2) {
+                        targetSpeed = -speed * 0.5;
+                        targetTurn = turnSpeed;
+                    }
+                } else {
+                    if (distLeft < 3) targetTurn = -turnSpeed * 0.5;
+                    if (distRight < 3) targetTurn = turnSpeed * 0.5;
+                }
+            }
+
+            targetSpeed = Math.max(-speed, Math.min(speed, targetSpeed));
+            targetTurn = Math.max(-turnSpeed, Math.min(turnSpeed, targetTurn));
+
+            robotState.velocity = robotState.velocity * 0.5 + targetSpeed * 0.5;
+            robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetTurn * 0.5;
+
+            const newActiveKeys: Record<string, boolean> = {};
+            if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
+            if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
+            if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
+            if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
+            
+            setActiveKeys(prev => {
+                const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
+                                   Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
+                return keysChanged ? newActiveKeys : prev;
+            });
+
+            sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
+            return;
+        }
+
+        if (!model) return;
 
         // Stuck detection logic
         if (typeof sim.current.lastX === 'undefined') {
@@ -1184,9 +1703,9 @@ export default function App() {
 
         // Match training frequency (10Hz = 100ms)
         sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
-    }, [addLog, captureImage, speed, turnSpeed]);
+    }, [addLog, captureImage, speed, turnSpeed, selectedModel]);
 
-    const startInference = () => {
+    const startInference = async () => {
         if (isInferencing) {
             stopInference();
             return;
@@ -1200,10 +1719,25 @@ export default function App() {
                 return;
             }
 
-            sim.current.isInferencing = true;
-            setIsInferencing(true);
-            addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
-            runInference();
+            try {
+                if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例') {
+                    addLog(`Loading ${selectedModel}...`, 'info');
+                    sim.current.isInferencing = true;
+                    setIsInferencing(true);
+                    addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
+                    runInference();
+                } else {
+                    addLog(`Loading model ${selectedModel}...`, 'info');
+                    sim.current.model = await tf.loadLayersModel(`indexeddb://${selectedModel}`);
+                    sim.current.isInferencing = true;
+                    setIsInferencing(true);
+                    addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
+                    runInference();
+                }
+            } catch (err) {
+                console.error(err);
+                addLog(`Failed to load model ${selectedModel}`, 'error');
+            }
         }
     };
 
@@ -1401,6 +1935,33 @@ export default function App() {
                                     </label>
                                 </div>
                             </div>
+                            <div className="space-y-3">
+                                <button
+                                    className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
+                                    onClick={(e) => {
+                                        const content = e.currentTarget.nextElementSibling;
+                                        const chevron = e.currentTarget.querySelector('.chevron');
+                                        if (content && chevron) {
+                                            content.classList.toggle('hidden');
+                                            chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                        }
+                                    }}
+                                >
+                                    <span>小车配置</span>
+                                    <span className="chevron text-[10px]">▼</span>
+                                </button>
+                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 hidden">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={hasArm} 
+                                            onChange={e => setHasArm(e.target.checked)} 
+                                            className="w-4 h-4 rounded bg-slate-800 border-slate-700 accent-blue-500"
+                                        />
+                                        <span>安装机械臂</span>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="space-y-3">
@@ -1441,7 +2002,19 @@ export default function App() {
                                     </label>
                                 </div>
                                 <div className="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
-                                    <div></div>
+                                    {hasArm ? (
+                                        <button
+                                            className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['q'] ? 'bg-purple-600 border-purple-400 text-white shadow-[0_0_10px_rgba(147,51,234,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
+                                            onMouseDown={() => sim.current.keys['q'] = true}
+                                            onMouseUp={() => sim.current.keys['q'] = false}
+                                            onMouseLeave={() => sim.current.keys['q'] = false}
+                                            onTouchStart={(e) => { e.preventDefault(); sim.current.keys['q'] = true; }}
+                                            onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['q'] = false; }}
+                                        >
+                                            <span className="text-xs font-bold">夹起</span>
+                                            <span className="text-[10px]">Q</span>
+                                        </button>
+                                    ) : <div></div>}
                                     <button
                                         className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['w'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['w'] = true}
@@ -1453,7 +2026,19 @@ export default function App() {
                                         <span className="text-lg leading-none">↑</span>
                                         <span className="text-[10px]">W</span>
                                     </button>
-                                    <div></div>
+                                    {hasArm ? (
+                                        <button
+                                            className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['e'] ? 'bg-purple-600 border-purple-400 text-white shadow-[0_0_10px_rgba(147,51,234,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
+                                            onMouseDown={() => sim.current.keys['e'] = true}
+                                            onMouseUp={() => sim.current.keys['e'] = false}
+                                            onMouseLeave={() => sim.current.keys['e'] = false}
+                                            onTouchStart={(e) => { e.preventDefault(); sim.current.keys['e'] = true; }}
+                                            onTouchEnd={(e) => { e.preventDefault(); sim.current.keys['e'] = false; }}
+                                        >
+                                            <span className="text-xs font-bold">放下</span>
+                                            <span className="text-[10px]">E</span>
+                                        </button>
+                                    ) : <div></div>}
                                     <button
                                         className={`control-btn p-2 rounded border flex flex-col items-center gap-1 transition-all ${activeKeys['a'] ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-600'}`}
                                         onMouseDown={() => sim.current.keys['a'] = true}
@@ -1488,7 +2073,7 @@ export default function App() {
                                         <span className="text-[10px]">D</span>
                                     </button>
                                 </div>
-                                <p className="text-[10px] text-slate-500 text-center">使用键盘 WASD 或方向键控制</p>
+                                <p className="text-[10px] text-slate-500 text-center mt-2">使用键盘 WASD 或方向键控制</p>
                             </div>
                         </div>
                         {/* <div className="bg-slate-900/50 p-1 rounded-lg flex text-xs font-medium border border-slate-800">
@@ -1532,12 +2117,15 @@ export default function App() {
                             </div>
                             <div className="flex gap-2">
                                 <button onClick={saveDataset} disabled={episodesCount === 0} className={`flex-1 ${trainingMode === 'cloud' ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'} border border-slate-600 py-2 rounded-lg text-sm transition-all disabled:opacity-50`}>
-                                    {trainingMode === 'cloud' ? '上传 (Upload)' : '保存 (Save)'}
+                                    {trainingMode === 'cloud' ? '上传' : '保存'}
                                 </button>
                                 <label className="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded-lg text-sm transition-all flex items-center justify-center">
-                                    导入 (Import)
+                                    导入
                                     <input type="file" accept=".json" onChange={handleImportDataset} className="hidden" />
                                 </label>
+                                <button onClick={clearDataset} disabled={episodesCount === 0} className="flex-1 bg-red-900/30 hover:bg-red-800/50 text-red-400 border border-red-800/50 py-2 rounded-lg text-sm transition-all disabled:opacity-50">
+                                    清空
+                                </button>
                             </div>
                         </div>
                         {trainingMode === 'cloud' && (
@@ -1623,16 +2211,27 @@ export default function App() {
                                     </div>
                                 </div>
                             ) : (
-                                <select 
-                                    className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
-                                    value={selectedModel}
-                                    onChange={e => setSelectedModel(e.target.value)}
-                                >
-                                    <option value="">选择训练好的模型...</option>
-                                    {trainedModels.map((model, i) => (
-                                        <option key={i} value={model.name}>{model.name} (Ready)</option>
-                                    ))}
-                                </select>
+                                <div className="space-y-2">
+                                    <select 
+                                        className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
+                                        value={selectedModel}
+                                        onChange={e => setSelectedModel(e.target.value)}
+                                    >
+                                        <option value="">选择训练好的模型...</option>
+                                        {trainedModels.map((model, i) => (
+                                            <option key={i} value={model.name}>{model.name} (Ready)</option>
+                                        ))}
+                                    </select>
+                                    <div className="flex gap-2">
+                                        <button onClick={handleExportModels} disabled={trainedModels.length === 0} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-1.5 rounded text-xs transition-all disabled:opacity-50">
+                                            导出模型
+                                        </button>
+                                        <label className="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-1.5 rounded text-xs transition-all flex items-center justify-center">
+                                            导入文件夹
+                                            <input type="file" webkitdirectory="" directory="" multiple onChange={handleImportModelsFolder} className="hidden" />
+                                        </label>
+                                    </div>
+                                </div>
                             )}
 
                             <button
@@ -1698,7 +2297,11 @@ export default function App() {
                             <h4 className="text-xs font-semibold text-slate-400 uppercase">System Logs</h4>
                             <button onClick={clearLogs} className="text-[10px] text-slate-600 hover:text-slate-400">Clear</button>
                         </div>
-                        <div ref={logContainerRef} className="flex-1 overflow-y-auto p-3 space-y-1 text-[10px] mono">
+                        <div 
+                            ref={logContainerRef} 
+                            onScroll={handleLogScroll}
+                            className="flex-1 overflow-y-auto p-3 space-y-1 text-[10px] mono"
+                        >
                             {logs.map((log, i) => (
                                 <div key={i} className={`log-entry log-${log.type}`}>
                                     [{log.time}] {log.message}
