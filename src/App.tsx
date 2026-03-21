@@ -21,7 +21,9 @@ export default function App() {
     const [trainingStatus, setTrainingStatus] = useState('');
     const [trainedModels, setTrainedModels] = useState<{ name: string }[]>([
         { name: '跟随网球示例' },
-        { name: '自动避障示例' }
+        { name: '自动避障示例' },
+        { name: '找到小球并拾取示例' },
+        { name: '找到红桶放下小球示例' }
     ]);
     const [selectedModel, setSelectedModel] = useState<string>('跟随网球示例');
     const [trainedModel, setTrainedModel] = useState<{ name: string } | null>(null);
@@ -1462,151 +1464,248 @@ export default function App() {
         if (!sim.current.isInferencing || !sim.current.target) return;
 
         const { robotState, target, model } = sim.current;
+        const armState = sim.current.arm?.state;
+        const isHolding = armState === 'holding';
+        const isArmBusy = armState === 'picking_down' || armState === 'picking_up' || armState === 'dropping_down' || armState === 'dropping_up';
 
-        if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例') {
-            let targetSpeed = 0;
-            let targetTurn = 0;
+        if (isArmBusy) {
+            robotState.velocity = 0;
+            robotState.angularVelocity = 0;
+            sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
+            return;
+        }
 
-            if (selectedModel === '跟随网球示例') {
-                const dirX = Math.sin(robotState.rotation);
-                const dirZ = Math.cos(robotState.rotation);
-                
-                // Calculate from camera position (0.85 units forward) to match visual FOV
-                const camX = robotState.x + dirX * 0.85;
-                const camZ = robotState.z + dirZ * 0.85;
-                
-                const dx = target.position.x - camX;
-                const dz = target.position.z - camZ;
-                const distance = Math.sqrt(dx * dx + dz * dz);
-                
-                const targetAngle = Math.atan2(dx, dz);
-                let angleDiff = targetAngle - robotState.rotation;
-                
-                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        let targetSpeed = 0;
+        let targetTurn = 0;
 
-                // Camera horizontal FOV is ~96 degrees (48 left/right). Use 45 degrees for strict visibility.
-                const FOV = Math.PI / 4; 
-                let isVisible = Math.abs(angleDiff) <= FOV;
+        const computeFollow = (goal: THREE.Mesh) => {
+            const dirX = Math.sin(robotState.rotation);
+            const dirZ = Math.cos(robotState.rotation);
+            const camX = robotState.x + dirX * 0.85;
+            const camZ = robotState.z + dirZ * 0.85;
 
-                // Check for obstacles blocking the view
-                if (isVisible && distance > 1.0) {
-                    const steps = Math.floor(distance / 0.5);
-                    const stepX = dx / steps;
-                    const stepZ = dz / steps;
-                    let px = camX;
-                    let pz = camZ;
-                    
-                    for (let i = 1; i < steps; i++) {
-                        px += stepX;
-                        pz += stepZ;
-                        for (const wall of sim.current.walls) {
-                            if (wall === target) continue;
-                            const w = wall.userData.w;
-                            const depth = wall.userData.d;
-                            const wx = wall.position.x;
-                            const wz = wall.position.z;
-                            if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
-                                isVisible = false;
-                                break;
-                            }
-                        }
-                        if (!isVisible) break;
-                    }
-                }
+            const dx = goal.position.x - camX;
+            const dz = goal.position.z - camZ;
+            const distance = Math.sqrt(dx * dx + dz * dz);
 
-                if (distance <= 1.5 && isVisible) {
-                    // Reached the ball and it's visible: stop completely, no jittering
-                    targetSpeed = 0;
-                    targetTurn = 0;
-                } else if (!isVisible) {
-                    // Ball out of FOV or blocked: rotate in place to search
-                    targetSpeed = 0;
-                    targetTurn = turnSpeed;
-                } else {
-                    // Ball in FOV: track and approach
-                    // Use a smaller multiplier for smoother turning
-                    targetTurn = angleDiff * 1.0;
-                    
-                    // Cap the turn speed to prevent violent swings
-                    targetTurn = Math.max(-turnSpeed * 1.5, Math.min(turnSpeed * 1.5, targetTurn));
-                    
-                    // Smooth speed approach
-                    targetSpeed = Math.min(speed, (distance - 1.5) * 0.5);
-                    
-                    // If the angle is too large, slow down to turn
-                    if (Math.abs(angleDiff) > Math.PI / 6) {
-                        targetSpeed *= 0.5;
-                    }
-                }
-            } else if (selectedModel === '自动避障示例') {
-                const checkDistance = (angleOffset: number) => {
-                    const checkAngle = robotState.rotation + angleOffset;
-                    const dirX = Math.sin(checkAngle);
-                    const dirZ = Math.cos(checkAngle);
-                    
-                    let minDist = 5; // max lookahead
-                    const robotRadius = 1.0; // slightly larger for safety
+            const targetAngle = Math.atan2(dx, dz);
+            let angleDiff = targetAngle - robotState.rotation;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
+            const FOV = Math.PI / 4;
+            let isVisible = Math.abs(angleDiff) <= FOV;
+
+            if (isVisible && distance > 1.0) {
+                const steps = Math.max(1, Math.floor(distance / 0.5));
+                const stepX = dx / steps;
+                const stepZ = dz / steps;
+                let px = camX;
+                let pz = camZ;
+
+                for (let i = 1; i < steps; i++) {
+                    px += stepX;
+                    pz += stepZ;
                     for (const wall of sim.current.walls) {
-                        for (let d = 0.5; d < minDist; d += 0.5) {
-                            const px = robotState.x + dirX * d;
-                            const pz = robotState.z + dirZ * d;
-                            
-                            const w = wall.userData.w;
-                            const depth = wall.userData.d;
-                            const wx = wall.position.x;
-                            const wz = wall.position.z;
-                            
-                            if (px > wx - w/2 - robotRadius && px < wx + w/2 + robotRadius &&
-                                pz > wz - depth/2 - robotRadius && pz < wz + depth/2 + robotRadius) {
-                                minDist = d;
-                                break;
-                            }
+                        if (wall === goal) continue;
+                        const w = wall.userData.w;
+                        const depth = wall.userData.d;
+                        const wx = wall.position.x;
+                        const wz = wall.position.z;
+
+                        if (px > wx - w / 2 && px < wx + w / 2 && pz > wz - depth / 2 && pz < wz + depth / 2) {
+                            isVisible = false;
+                            break;
                         }
                     }
-                    return minDist;
-                };
-
-                const distFront = checkDistance(0);
-                const distLeft = checkDistance(Math.PI / 4);
-                const distRight = checkDistance(-Math.PI / 4);
-
-                targetSpeed = speed * 0.8;
-                targetTurn = 0;
-
-                if (distFront < 3) {
-                    targetSpeed = 0; 
-                    if (distLeft > distRight) {
-                        targetTurn = turnSpeed;
-                    } else {
-                        targetTurn = -turnSpeed;
-                    }
-                    if (distLeft < 2 && distRight < 2) {
-                        targetSpeed = -speed * 0.5;
-                        targetTurn = turnSpeed;
-                    }
-                } else {
-                    if (distLeft < 3) targetTurn = -turnSpeed * 0.5;
-                    if (distRight < 3) targetTurn = turnSpeed * 0.5;
+                    if (!isVisible) break;
                 }
             }
 
-            targetSpeed = Math.max(-speed, Math.min(speed, targetSpeed));
-            targetTurn = Math.max(-turnSpeed, Math.min(turnSpeed, targetTurn));
+            if (distance <= 1.2 && isVisible) {
+                targetSpeed = 0;
+                targetTurn = 0;
+            } else if (!isVisible) {
+                targetSpeed = 0;
+                targetTurn = turnSpeed;
+            } else {
+                targetTurn = angleDiff * 1.0;
+                targetTurn = Math.max(-turnSpeed * 1.5, Math.min(turnSpeed * 1.5, targetTurn));
+                targetSpeed = Math.min(speed, (distance - 1.2) * 0.5);
+                if (Math.abs(angleDiff) > Math.PI / 6) {
+                    targetSpeed *= 0.5;
+                }
+            }
 
-            robotState.velocity = robotState.velocity * 0.5 + targetSpeed * 0.5;
-            robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetTurn * 0.5;
+            return { distance, isVisible };
+        };
+
+        if (selectedModel === '跟随网球示例' || selectedModel === '找到小球并拾取示例' || selectedModel === '找到红桶放下小球示例') {
+            const followGoal = selectedModel === '找到红桶放下小球示例' && isHolding && sim.current.bucket ? sim.current.bucket : target;
+            const { distance, isVisible } = computeFollow(followGoal);
+
+            if (selectedModel === '找到小球并拾取示例' && !isHolding && distance <= 1.2 && isVisible) {
+                sim.current.keys['q'] = true;
+            }
+
+            if (selectedModel === '找到红桶放下小球示例') {
+                if (!isHolding) {
+                    // 如果没有持有球，停止移动等待用户手动拾取
+                    targetSpeed = 0;
+                    targetTurn = 0;
+                } else if (sim.current.bucket && distance <= 1.2 && isVisible) {
+                    sim.current.keys['e'] = true;
+                }
+            }
+        } else if (selectedModel === '自动避障示例') {
+            const checkDistance = (angleOffset: number) => {
+                const checkAngle = robotState.rotation + angleOffset;
+                const dirX = Math.sin(checkAngle);
+                const dirZ = Math.cos(checkAngle);
+
+                let minDist = 5;
+                const robotRadius = 1.0;
+
+                for (const wall of sim.current.walls) {
+                    for (let d = 0.5; d < minDist; d += 0.5) {
+                        const px = robotState.x + dirX * d;
+                        const pz = robotState.z + dirZ * d;
+                        const w = wall.userData.w;
+                        const depth = wall.userData.d;
+                        const wx = wall.position.x;
+                        const wz = wall.position.z;
+
+                        if (px > wx - w / 2 - robotRadius && px < wx + w / 2 + robotRadius &&
+                            pz > wz - depth / 2 - robotRadius && pz < wz + depth / 2 + robotRadius) {
+                            minDist = d;
+                            break;
+                        }
+                    }
+                }
+                return minDist;
+            };
+
+            const distFront = checkDistance(0);
+            const distLeft = checkDistance(Math.PI / 4);
+            const distRight = checkDistance(-Math.PI / 4);
+
+            targetSpeed = speed * 0.8;
+            targetTurn = 0;
+
+            if (distFront < 3) {
+                targetSpeed = 0;
+                if (distLeft > distRight) {
+                    targetTurn = turnSpeed;
+                } else {
+                    targetTurn = -turnSpeed;
+                }
+                if (distLeft < 2 && distRight < 2) {
+                    targetSpeed = -speed * 0.5;
+                    targetTurn = turnSpeed;
+                }
+            } else {
+                if (distLeft < 3) targetTurn = -turnSpeed * 0.5;
+                if (distRight < 3) targetTurn = turnSpeed * 0.5;
+            }
+        } else {
+            if (!model) return;
+
+            if (typeof sim.current.lastX === 'undefined') {
+                sim.current.lastX = robotState.x;
+                sim.current.lastZ = robotState.z;
+                sim.current.stuckCounter = 0;
+            }
+
+            const distMoved = Math.sqrt(
+                Math.pow(robotState.x - sim.current.lastX, 2) +
+                Math.pow(robotState.z - sim.current.lastZ, 2)
+            );
+            sim.current.lastX = robotState.x;
+            sim.current.lastZ = robotState.z;
+
+            if (Math.abs(robotState.velocity) > 0.05 && distMoved < 0.005) {
+                sim.current.stuckCounter++;
+            } else {
+                sim.current.stuckCounter = Math.max(0, sim.current.stuckCounter - 1);
+            }
+
+            if (sim.current.stuckCounter > 20) {
+                addLog('Stuck detected! Recovering...', 'warning');
+                robotState.velocity = -0.2;
+                robotState.angularVelocity = (Math.random() - 0.5) * 2.0;
+                sim.current.stuckCounter = 0;
+                sim.current.inferenceTimeoutId = setTimeout(runInference, 1500);
+                return;
+            }
+
+            const image = captureImage();
+            if (!image) return;
+
+            const dx = target.position.x - robotState.x;
+            const dz = target.position.z - robotState.z;
+            const targetDist = Math.sqrt(dx * dx + dz * dz);
+
+            const state = new Array(14).fill(0);
+            state[0] = robotState.x;
+            state[1] = robotState.z;
+            state[2] = robotState.rotation;
+            state[3] = robotState.velocity;
+            state[4] = targetDist;
+
+            const prediction = actService.predict(model, image, state);
+
+            if (!sim.current.actionBuffer) sim.current.actionBuffer = [];
+
+            const newChunk: any[] = [];
+            for (let i = 0; i < actService.CHUNK_SIZE; i++) {
+                newChunk.push({
+                    v: prediction[i * 2],
+                    w: prediction[i * 2 + 1],
+                    weight: Math.exp(-0.5 * i)
+                });
+            }
+
+            setActionChunks(newChunk.map(a => a.v));
+            sim.current.actionBuffer.push(newChunk);
+
+            if (sim.current.actionBuffer.length > actService.CHUNK_SIZE) {
+                sim.current.actionBuffer.shift();
+            }
+
+            let sumV = 0;
+            let sumW = 0;
+            let totalWeight = 0;
+
+            sim.current.actionBuffer.forEach((chunk: any[], index: number) => {
+                const offset = sim.current.actionBuffer.length - 1 - index;
+                if (offset < chunk.length) {
+                    const action = chunk[offset];
+                    sumV += action.v * action.weight;
+                    sumW += action.w * action.weight;
+                    totalWeight += action.weight;
+                }
+            });
+
+            if (totalWeight > 0) {
+                const targetV = Math.max(-speed, Math.min(speed, sumV / totalWeight));
+                const targetW = Math.max(-turnSpeed, Math.min(turnSpeed, sumW / totalWeight));
+
+                robotState.velocity = robotState.velocity * 0.5 + targetV * 0.5;
+                robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetW * 0.5;
+            } else {
+                robotState.velocity = Math.max(-speed, Math.min(speed, prediction[0]));
+                robotState.angularVelocity = Math.max(-turnSpeed, Math.min(turnSpeed, prediction[1]));
+            }
 
             const newActiveKeys: Record<string, boolean> = {};
             if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
             if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
             if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
             if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
-            
+
             setActiveKeys(prev => {
-                const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
-                                   Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
+                const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length ||
+                    Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
                 return keysChanged ? newActiveKeys : prev;
             });
 
@@ -1614,131 +1713,24 @@ export default function App() {
             return;
         }
 
-        if (!model) return;
+        targetSpeed = Math.max(-speed, Math.min(speed, targetSpeed));
+        targetTurn = Math.max(-turnSpeed, Math.min(turnSpeed, targetTurn));
 
-        // Stuck detection logic
-        if (typeof sim.current.lastX === 'undefined') {
-            sim.current.lastX = robotState.x;
-            sim.current.lastZ = robotState.z;
-            sim.current.stuckCounter = 0;
-        }
+        robotState.velocity = robotState.velocity * 0.5 + targetSpeed * 0.5;
+        robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetTurn * 0.5;
 
-        const distMoved = Math.sqrt(
-            Math.pow(robotState.x - sim.current.lastX, 2) +
-            Math.pow(robotState.z - sim.current.lastZ, 2)
-        );
-        sim.current.lastX = robotState.x;
-        sim.current.lastZ = robotState.z;
-
-        if (Math.abs(robotState.velocity) > 0.05 && distMoved < 0.005) {
-            sim.current.stuckCounter++;
-        } else {
-            sim.current.stuckCounter = Math.max(0, sim.current.stuckCounter - 1);
-        }
-
-        if (sim.current.stuckCounter > 20) {
-            addLog('Stuck detected! Recovering...', 'warning');
-            robotState.velocity = -0.2;
-            robotState.angularVelocity = (Math.random() - 0.5) * 2.0; // Increased rotation range
-            sim.current.stuckCounter = 0;
-            // Increase recovery time to 1.5s to allow robot to back away fully
-            sim.current.inferenceTimeoutId = setTimeout(runInference, 1500);
-            return;
-        }
-
-        const image = captureImage();
-        if (!image) return;
-
-        const dx = target.position.x - robotState.x;
-        const dz = target.position.z - robotState.z;
-        const targetDist = Math.sqrt(dx * dx + dz * dz);
-
-        const state = new Array(14).fill(0);
-        state[0] = robotState.x;
-        state[1] = robotState.z;
-        state[2] = robotState.rotation;
-        state[3] = robotState.velocity;
-        state[4] = targetDist;
-
-        const prediction = actService.predict(model, image, state);
-
-        // Temporal Ensembling (simplified)
-        if (!sim.current.actionBuffer) sim.current.actionBuffer = [];
-
-        // Parse prediction into chunk
-        const newChunk = [];
-        for (let i = 0; i < actService.CHUNK_SIZE; i++) {
-            newChunk.push({
-                v: prediction[i * 2],
-                w: prediction[i * 2 + 1],
-                weight: Math.exp(-0.5 * i) // Exponential weighting
-            });
-        }
-        setActionChunks(newChunk.map(a => a.v));
-        sim.current.actionBuffer.push(newChunk);
-
-        // Keep buffer size limited
-        if (sim.current.actionBuffer.length > actService.CHUNK_SIZE) {
-            sim.current.actionBuffer.shift();
-        }
-
-        // Aggregate actions
-        let sumV = 0, sumW = 0, totalWeight = 0;
-
-        sim.current.actionBuffer.forEach((chunk: any[], index: number) => {
-            const offset = sim.current.actionBuffer.length - 1 - index;
-            if (offset < chunk.length) {
-                const action = chunk[offset];
-                sumV += action.v * action.weight;
-                sumW += action.w * action.weight;
-                totalWeight += action.weight;
-            }
-        });
-
-        if (totalWeight > 0) {
-            // Apply slight smoothing to velocity to prevent sudden jumps
-            const targetV = Math.max(-speed, Math.min(speed, sumV / totalWeight));
-            const targetW = Math.max(-turnSpeed, Math.min(turnSpeed, sumW / totalWeight));
-
-            // Simple low-pass filter (alpha = 0.5)
-            robotState.velocity = robotState.velocity * 0.5 + targetV * 0.5;
-            robotState.angularVelocity = robotState.angularVelocity * 0.5 + targetW * 0.5;
-
-            // Log movement periodically (every 200ms)
-            if (!sim.current.lastInferenceLogTime || Date.now() - sim.current.lastInferenceLogTime > 200) {
-                addLog(`Inference Movement: V=${robotState.velocity.toFixed(2)}, W=${robotState.angularVelocity.toFixed(2)}`, 'info');
-                sim.current.lastInferenceLogTime = Date.now();
-            }
-        } else {
-            robotState.velocity = Math.max(-speed, Math.min(speed, prediction[0]));
-            robotState.angularVelocity = Math.max(-turnSpeed, Math.min(turnSpeed, prediction[1]));
-        }
-
-        // Update active keys for UI highlighting during inference
         const newActiveKeys: Record<string, boolean> = {};
         if (robotState.velocity > 0.02) newActiveKeys['w'] = true;
         if (robotState.velocity < -0.02) newActiveKeys['s'] = true;
         if (robotState.angularVelocity > 0.01) newActiveKeys['a'] = true;
         if (robotState.angularVelocity < -0.01) newActiveKeys['d'] = true;
-        
+
         setActiveKeys(prev => {
-            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length || 
-                               Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
+            const keysChanged = Object.keys(newActiveKeys).length !== Object.keys(prev).length ||
+                Object.keys(newActiveKeys).some(k => newActiveKeys[k] !== prev[k]);
             return keysChanged ? newActiveKeys : prev;
         });
 
-        // Check goal
-        if (targetDist < 1.0) {
-            addLog('Target reached!', 'success');
-            target.position.set(
-                (Math.random() - 0.5) * 12,
-                0.4,
-                (Math.random() - 0.5) * 12
-            );
-            sim.current.actionBuffer = [];
-        }
-
-        // Match training frequency (10Hz = 100ms)
         sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
     }, [addLog, captureImage, speed, turnSpeed, selectedModel]);
 
@@ -1757,7 +1749,7 @@ export default function App() {
             }
 
             try {
-                if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例') {
+                if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例' || selectedModel === '找到小球并拾取示例' || selectedModel === '找到红桶放下小球示例') {
                     addLog(`Loading ${selectedModel}...`, 'info');
                     sim.current.isInferencing = true;
                     setIsInferencing(true);
