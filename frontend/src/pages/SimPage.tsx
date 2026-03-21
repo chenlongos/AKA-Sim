@@ -704,10 +704,15 @@ const SimPage = () => {
                     inferBusyRef.current = true
                     lastInferAtRef.current = currentTime
                     const {state, envState} = getObservationVectors()
+                    const image = fpvRef.current?.toDataURL('image/png') ?? ""
                     fetch(`/api/infer/step`, {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify({state, env_state: envState})
+                        body: JSON.stringify({
+                            state,
+                            env_state: envState,
+                            images: image ? [image] : [],
+                        })
                     })
                         .then(res => res.json())
                         .then(data => {

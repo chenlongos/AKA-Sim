@@ -5,13 +5,15 @@ import torch
 from backend.sim.model.car import car
 from ..extensions import socketio
 from flask_socketio import emit
-from backend.policies.act.configuration_act import ACTConfig
 from backend.policies.act.modeling_act import ACT
-from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
-from backend.configs.types import PolicyFeature, FeatureType
+from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION, OBS_IMAGES, OBS_IMAGE
+from backend.utils.image_utils import build_infer_image_tensors
+from backend.train import build_config
 
 _act_model = None
 _act_device = None
+_act_num_cameras = 0
+_act_image_size = (224, 224)
 
 
 @socketio.on('action')
@@ -53,32 +55,34 @@ def get_car_state():
 
 
 def _load_act_model():
-    global _act_model, _act_device
+    global _act_model, _act_device, _act_num_cameras, _act_image_size
     if _act_model is not None:
         return
     _act_device = "cuda" if torch.cuda.is_available() else "cpu"
-    state_dim = int(os.getenv("ACT_STATE_DIM", "14"))
-    env_state_dim = int(os.getenv("ACT_ENV_STATE_DIM", "6"))
-    action_dim = int(os.getenv("ACT_ACTION_DIM", "7"))
-    chunk_size = int(os.getenv("ACT_CHUNK_SIZE", "16"))
     checkpoint_path = os.getenv(
         "ACT_CHECKPOINT_PATH",
         os.path.join("output", "train", "act_demo", "act_checkpoint.pt"),
     )
-    config = ACTConfig(
-        chunk_size=chunk_size,
-        use_vae=False,
-        input_features={
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
-            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(env_state_dim,)),
-        },
-        output_features={
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
-        },
+    checkpoint = torch.load(checkpoint_path, map_location=_act_device)
+    state_dim = int(checkpoint.get("state_dim", os.getenv("ACT_STATE_DIM", "14")))
+    env_state_dim = int(checkpoint.get("env_state_dim", os.getenv("ACT_ENV_STATE_DIM", "6")))
+    action_dim = int(checkpoint.get("action_dim", os.getenv("ACT_ACTION_DIM", "7")))
+    chunk_size = int(checkpoint.get("chunk_size", os.getenv("ACT_CHUNK_SIZE", "16")))
+    use_vae = bool(checkpoint.get("use_vae", False))
+    _act_num_cameras = int(checkpoint.get("num_cameras", 0)) if checkpoint.get("has_images", False) else 0
+    raw_image_size = checkpoint.get("image_size") or [224, 224]
+    _act_image_size = (int(raw_image_size[0]), int(raw_image_size[1]))
+    config = build_config(
+        state_dim,
+        env_state_dim,
+        action_dim,
+        chunk_size,
+        use_vae,
+        num_cameras=_act_num_cameras,
+        image_size=_act_image_size,
     )
     model = ACT(config).to(_act_device)
-    state = torch.load(checkpoint_path, map_location=_act_device)
-    model.load_state_dict(state["model_state_dict"])
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     _act_model = model
 
@@ -108,6 +112,20 @@ def act_infer(payload):
             OBS_STATE: _to_tensor(obs["state"]),
             OBS_ENV_STATE: _to_tensor(obs["environment_state"]),
         }
+        images = obs.get("images")
+        if images is None:
+            images = obs.get(OBS_IMAGES)
+        if images is None:
+            images = obs.get(OBS_IMAGE)
+        if _act_num_cameras > 0:
+            batch[OBS_IMAGES] = [
+                image_tensor.to(_act_device)
+                for image_tensor in build_infer_image_tensors(
+                    images,
+                    num_cameras=_act_num_cameras,
+                    image_size=_act_image_size,
+                )
+            ]
         with torch.no_grad():
             actions, _ = _act_model(batch)
         emit('act_action', {"action": actions.detach().cpu().tolist()})
