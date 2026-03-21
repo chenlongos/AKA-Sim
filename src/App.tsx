@@ -178,6 +178,7 @@ export default function App() {
         sim.current.arm = {
             lowerArm, elbow, wrist, gripper,
             state: 'idle',
+            hasBall: false,
             grabbedObject: null,
             targetRotations: { lowerArm: Math.PI/4, elbow: Math.PI/2.5, wrist: -Math.PI/6 }
         };
@@ -218,7 +219,19 @@ export default function App() {
             // 选择距离最近的对象
             if (allIntersects.length > 0) {
                 allIntersects.sort((a, b) => a.distance - b.distance);
-                sim.current.draggingObject = allIntersects[0].object;
+                const selectedObject = allIntersects[0].object;
+                const isTargetHeld = selectedObject === sim.current.target && (
+                    sim.current.arm?.hasBall ||
+                    sim.current.arm?.grabbedObject === sim.current.target ||
+                    sim.current.arm?.state === 'holding'
+                );
+                
+                // 如果拖动的是小球且已被持有，则不允许拖动
+                if (isTargetHeld) {
+                    return;
+                }
+                
+                sim.current.draggingObject = selectedObject;
                 isDragging.current = true;
                 if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
             }
@@ -235,7 +248,12 @@ export default function App() {
 
             if (!isDragging.current) {
                 // 仅改变光标，不更新任何对象位置
-                const targetIntersects = sim.current.target ? raycaster.current.intersectObject(sim.current.target) : [];
+                const targetIsHeld = !!sim.current.target && (
+                    sim.current.arm?.hasBall ||
+                    sim.current.arm?.grabbedObject === sim.current.target ||
+                    sim.current.arm?.state === 'holding'
+                );
+                const targetIntersects = sim.current.target && !targetIsHeld ? raycaster.current.intersectObject(sim.current.target) : [];
                 const bucketIntersects = sim.current.bucket ? raycaster.current.intersectObject(sim.current.bucket) : [];
                 
                 if (renderer.domElement) {
@@ -841,7 +859,12 @@ export default function App() {
                 }
 
                 if (closestObj) {
+                    if (closestObj === sim.current.target && sim.current.draggingObject === sim.current.target) {
+                        isDragging.current = false;
+                        sim.current.draggingObject = null;
+                    }
                     arm.grabbedObject = closestObj;
+                    arm.hasBall = closestObj === sim.current.target;
                     arm.state = 'picking_down';
                     arm.targetRotations = { lowerArm: Math.PI/2.2, elbow: Math.PI/4, wrist: Math.PI/4 };
                     addLog('Picking up object...', 'info');
@@ -891,6 +914,7 @@ export default function App() {
                     // Drop to ground level
                     arm.grabbedObject.position.y = 0.25;
                     arm.grabbedObject = null;
+                    arm.hasBall = false;
                 }
                 arm.state = 'dropping_up';
                 arm.targetRotations = { lowerArm: Math.PI/4, elbow: Math.PI/2.5, wrist: -Math.PI/6 };
@@ -1541,19 +1565,37 @@ export default function App() {
         };
 
         if (selectedModel === '跟随网球示例' || selectedModel === '找到小球并拾取示例' || selectedModel === '找到红桶放下小球示例') {
-            const followGoal = selectedModel === '找到红桶放下小球示例' && isHolding && sim.current.bucket ? sim.current.bucket : target;
-            const { distance, isVisible } = computeFollow(followGoal);
+            let followGoal: THREE.Mesh;
+            let shouldFollow = true;
 
-            if (selectedModel === '找到小球并拾取示例' && !isHolding && distance <= 1.2 && isVisible) {
-                sim.current.keys['q'] = true;
-            }
-
-            if (selectedModel === '找到红桶放下小球示例') {
-                if (!isHolding) {
-                    // 如果没有持有球，停止移动等待用户手动拾取
+            if (selectedModel === '找到小球并拾取示例') {
+                followGoal = target;
+                if (isHolding) {
+                    // 拾取成功后停止移动
+                    shouldFollow = false;
                     targetSpeed = 0;
                     targetTurn = 0;
-                } else if (sim.current.bucket && distance <= 1.2 && isVisible) {
+                }
+            } else if (selectedModel === '找到红桶放下小球示例') {
+                followGoal = isHolding && sim.current.bucket ? sim.current.bucket : target;
+                if (!isHolding) {
+                    // 如果没有持有球，停止移动等待用户手动拾取
+                    shouldFollow = false;
+                    targetSpeed = 0;
+                    targetTurn = 0;
+                }
+            } else {
+                followGoal = target;
+            }
+
+            if (shouldFollow) {
+                const { distance, isVisible } = computeFollow(followGoal);
+
+                if (selectedModel === '找到小球并拾取示例' && !isHolding && distance <= 1.2 && isVisible) {
+                    sim.current.keys['q'] = true;
+                }
+
+                if (selectedModel === '找到红桶放下小球示例' && isHolding && sim.current.bucket && distance <= 1.2 && isVisible) {
                     sim.current.keys['e'] = true;
                 }
             }
@@ -1751,6 +1793,15 @@ export default function App() {
             try {
                 if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例' || selectedModel === '找到小球并拾取示例' || selectedModel === '找到红桶放下小球示例') {
                     addLog(`Loading ${selectedModel}...`, 'info');
+                    
+                    // 检查初始状态
+                    if (selectedModel === '找到小球并拾取示例' && sim.current.arm?.hasBall) {
+                        addLog('警告: 初始状态已拾取到小球，此示例应从未拾取状态开始', 'warning');
+                    }
+                    if (selectedModel === '找到红桶放下小球示例' && !sim.current.arm?.hasBall) {
+                        addLog('警告: 初始状态未拾取到小球，请先手动拾取小球', 'warning');
+                    }
+                    
                     sim.current.isInferencing = true;
                     setIsInferencing(true);
                     addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
