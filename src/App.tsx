@@ -80,6 +80,8 @@ export default function App() {
         episodes: [] as any[],
         currentEpisode: [] as any[],
         target: null as THREE.Mesh | null,
+        bucket: null as THREE.Mesh | null,
+        draggingObject: null as THREE.Mesh | null,
         walls: [] as THREE.Mesh[],
         environmentGroup: null as THREE.Group | null,
         dirLight: null as THREE.DirectionalLight | null,
@@ -187,23 +189,41 @@ export default function App() {
 
         // Dragging Logic
         const onMouseDown = (event: MouseEvent) => {
-            if (!container || !sim.current.camera || !sim.current.target) return;
+            // 防止在已经拖动时再次设置拖动对象
+            if (isDragging.current) return;
+            
+            if (!container || !sim.current.camera) return;
             
             const rect = container.getBoundingClientRect();
             mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
             mouse.current.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
             
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
-            const intersects = raycaster.current.intersectObject(sim.current.target);
             
-            if (intersects.length > 0) {
+            // 优先检查目标对象，使用距离最近的
+            const allIntersects = [];
+            
+            if (sim.current.target) {
+                const targetIntersects = raycaster.current.intersectObject(sim.current.target);
+                allIntersects.push(...targetIntersects.map(i => ({ ...i, object: sim.current.target })));
+            }
+            
+            if (sim.current.bucket) {
+                const bucketIntersects = raycaster.current.intersectObject(sim.current.bucket);
+                allIntersects.push(...bucketIntersects.map(i => ({ ...i, object: sim.current.bucket })));
+            }
+            
+            // 选择距离最近的对象
+            if (allIntersects.length > 0) {
+                allIntersects.sort((a, b) => a.distance - b.distance);
+                sim.current.draggingObject = allIntersects[0].object;
                 isDragging.current = true;
                 if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
             }
         };
 
         const onMouseMove = (event: MouseEvent) => {
-            if (!container || !sim.current.camera || !sim.current.target) return;
+            if (!container || !sim.current.camera) return;
 
             const rect = container.getBoundingClientRect();
             mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
@@ -212,26 +232,32 @@ export default function App() {
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
 
             if (!isDragging.current) {
-                const intersects = raycaster.current.intersectObject(sim.current.target);
+                // 仅改变光标，不更新任何对象位置
+                const targetIntersects = sim.current.target ? raycaster.current.intersectObject(sim.current.target) : [];
+                const bucketIntersects = sim.current.bucket ? raycaster.current.intersectObject(sim.current.bucket) : [];
+                
                 if (renderer.domElement) {
-                    renderer.domElement.style.cursor = intersects.length > 0 ? 'grab' : 'default';
+                    renderer.domElement.style.cursor = (targetIntersects.length > 0 || bucketIntersects.length > 0) ? 'grab' : 'default';
                 }
                 return;
             }
 
-            if (!sim.current.plane) return;
+            // 拖动时：只更新当前拖动的对象，与平面交集
+            if (!sim.current.plane || !sim.current.draggingObject) return;
             
-            const intersects = raycaster.current.intersectObject(sim.current.plane);
+            const planeIntersects = raycaster.current.intersectObject(sim.current.plane);
             
-            if (intersects.length > 0) {
-                const point = intersects[0].point;
-                sim.current.target.position.x = point.x;
-                sim.current.target.position.z = point.z;
+            if (planeIntersects.length > 0) {
+                const point = planeIntersects[0].point;
+                // 明确只更新 draggingObject，不触及其他对象
+                sim.current.draggingObject.position.x = point.x;
+                sim.current.draggingObject.position.z = point.z;
             }
         };
 
         const onMouseUp = () => {
             isDragging.current = false;
+            sim.current.draggingObject = null;
             if (renderer.domElement) renderer.domElement.style.cursor = 'default';
         };
 
@@ -461,10 +487,21 @@ export default function App() {
         const ball = new THREE.Mesh(ballGeo, ballMat);
         ball.position.set(0, 0.25, -5);
         ball.castShadow = true;
-        ball.userData = { w: 0.5, d: 0.5 };
+        ball.userData = { w: 0.5, d: 0.5, isDraggable: true };
         group.add(ball);
         sim.current.walls.push(ball);
-        sim.current.target = ball; // Use ball as the target since red cube is removed
+        sim.current.target = ball;
+
+        // 红色方块（红桶）
+        const bucketGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+        const bucketMat = new THREE.MeshStandardMaterial({ color: 0xFF0000, roughness: 0.6 });
+        const bucket = new THREE.Mesh(bucketGeo, bucketMat);
+        bucket.position.set(0, 0.3, 5);
+        bucket.castShadow = true;
+        bucket.userData = { w: 0.6, d: 0.6, isDraggable: true, isBucket: true };
+        group.add(bucket);
+        sim.current.walls.push(bucket);
+        sim.current.bucket = bucket;
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
     }, [sceneType, sceneSize, sceneComplexity, addLog]);
