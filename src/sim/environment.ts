@@ -89,9 +89,19 @@ export function updateEnvironment(
     const ball = new THREE.Mesh(ballGeo, ballMat);
     ball.position.set(-halfSize/2 + 1.5, 0.25, halfSize/2 - 1.5);
     ball.castShadow = true;
-    ball.userData = { w: 0.5, d: 0.5 };
+    ball.userData = { w: 0.5, d: 0.5, isDraggable: true };
     group.add(ball);
     walls.push(ball);
 
-    return { walls, group, target: null };
+    // 红桶（红色方块）
+    const bucketGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+    const bucketMat = new THREE.MeshStandardMaterial({ color: 0xFF0000, roughness: 0.6 });
+    const bucket = new THREE.Mesh(bucketGeo, bucketMat);
+    bucket.position.set(halfSize/2 - 2, 0.3, -halfSize/2 + 2);
+    bucket.castShadow = true;
+    bucket.userData = { w: 0.6, d: 0.6, isDraggable: true, isBucket: true };
+    group.add(bucket);
+    walls.push(bucket);
+
+    return { walls, group, target: null, bucket };
 }

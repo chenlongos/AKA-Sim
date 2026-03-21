@@ -8,3 +8,4 @@ coverage/
 !.env.example
 *-lock.json
 *-lock.yaml
+.idea
