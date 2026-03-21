@@ -8,6 +8,8 @@ import { createScene, createCamera, createRenderer, createLights, createFloor } 
 import { createRobot } from './sim/robot';
 import { updateEnvironment } from './sim/environment';
 import { tr } from 'motion/react-client';
+import { ACTExecutor, ACTTask } from './sim/actExecutor';
+import { ArmController } from './sim/armController';
 
 export default function App() {
     // State
@@ -41,6 +43,8 @@ export default function App() {
     ]);
     const [actionChunks, setActionChunks] = useState<number[]>([]);
     const [activeKeys, setActiveKeys] = useState<Record<string, boolean>>({});
+    const [actTask, setActTask] = useState<ACTTask>('idle');
+    const [actExecutorState, setActExecutorState] = useState<{ task: ACTTask; subTask: string; isComplete: boolean; isExecuting: boolean } | null>(null);
 
     // Persist settings
     useEffect(() => {
@@ -80,6 +84,7 @@ export default function App() {
         episodes: [] as any[],
         currentEpisode: [] as any[],
         target: null as THREE.Mesh | null,
+        bucket: null as THREE.Mesh | null,
         walls: [] as THREE.Mesh[],
         environmentGroup: null as THREE.Group | null,
         dirLight: null as THREE.DirectionalLight | null,
@@ -103,11 +108,15 @@ export default function App() {
         stuckCounter: 0,
         actionBuffer: [] as any[],
         lastInferenceLogTime: 0,
-        lastManualLogTime: 0
+        lastManualLogTime: 0,
+        armController: null as ArmController | null,
+        actExecutor: null as ACTExecutor | null,
+        prevIsExecuting: false
     });
 
     const isAtBottom = useRef(true);
     const isDragging = useRef(false);
+    const draggingObject = useRef<THREE.Mesh | null>(null);
     const raycaster = useRef(new THREE.Raycaster());
     const mouse = useRef(new THREE.Vector2());
 
@@ -187,23 +196,35 @@ export default function App() {
 
         // Dragging Logic
         const onMouseDown = (event: MouseEvent) => {
-            if (!container || !sim.current.camera || !sim.current.target) return;
+            if (!container || !sim.current.camera) return;
             
             const rect = container.getBoundingClientRect();
             mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
             mouse.current.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
             
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
-            const intersects = raycaster.current.intersectObject(sim.current.target);
             
-            if (intersects.length > 0) {
+            // Check for both target (ball) and bucket
+            const objectsToCheck = [sim.current.target, sim.current.bucket].filter(obj => obj !== null) as THREE.Mesh[];
+            let draggedObject: THREE.Mesh | null = null;
+            
+            for (const obj of objectsToCheck) {
+                const intersects = raycaster.current.intersectObject(obj);
+                if (intersects.length > 0) {
+                    draggedObject = obj;
+                    break;
+                }
+            }
+            
+            if (draggedObject) {
                 isDragging.current = true;
+                draggingObject.current = draggedObject;
                 if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
             }
         };
 
         const onMouseMove = (event: MouseEvent) => {
-            if (!container || !sim.current.camera || !sim.current.target) return;
+            if (!container || !sim.current.camera) return;
 
             const rect = container.getBoundingClientRect();
             mouse.current.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
@@ -212,26 +233,38 @@ export default function App() {
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
 
             if (!isDragging.current) {
-                const intersects = raycaster.current.intersectObject(sim.current.target);
+                // Check for both target and bucket for cursor hover effect
+                const objectsToCheck = [sim.current.target, sim.current.bucket].filter(obj => obj !== null) as THREE.Mesh[];
+                let hovering = false;
+                
+                for (const obj of objectsToCheck) {
+                    const intersects = raycaster.current.intersectObject(obj);
+                    if (intersects.length > 0) {
+                        hovering = true;
+                        break;
+                    }
+                }
+                
                 if (renderer.domElement) {
-                    renderer.domElement.style.cursor = intersects.length > 0 ? 'grab' : 'default';
+                    renderer.domElement.style.cursor = hovering ? 'grab' : 'default';
                 }
                 return;
             }
 
-            if (!sim.current.plane) return;
+            if (!sim.current.plane || !draggingObject.current) return;
             
             const intersects = raycaster.current.intersectObject(sim.current.plane);
             
             if (intersects.length > 0) {
                 const point = intersects[0].point;
-                sim.current.target.position.x = point.x;
-                sim.current.target.position.z = point.z;
+                draggingObject.current.position.x = point.x;
+                draggingObject.current.position.z = point.z;
             }
         };
 
         const onMouseUp = () => {
             isDragging.current = false;
+            draggingObject.current = null;
             if (renderer.domElement) renderer.domElement.style.cursor = 'default';
         };
 
@@ -282,7 +315,32 @@ export default function App() {
         if (sim.current.armGroup) {
             sim.current.armGroup.visible = hasArm;
         }
-    }, [hasArm]);
+        
+        // Initialize ArmController and ACTExecutor if arm is available
+        if (hasArm && sim.current.arm && sim.current.robot) {
+            const armCtrl = new ArmController(
+                sim.current.armGroup!,
+                sim.current.arm.lowerArm,
+                sim.current.arm.elbow,
+                sim.current.arm.wrist,
+                sim.current.arm.gripper,
+                sim.current.environmentGroup!,
+                0.1
+            );
+            sim.current.armController = armCtrl;
+            
+            const executor = new ACTExecutor(
+                sim.current.scene!,
+                sim.current.walls,
+                addLog,
+                armCtrl
+            );
+            executor.setRobotRef(sim.current.robot, sim.current.robotState);
+            sim.current.actExecutor = executor;
+            
+            addLog('ACT Executor initialized', 'info');
+        }
+    }, [hasArm, addLog]);
 
     useEffect(() => {
         if (sim.current.dirLight) {
@@ -464,7 +522,19 @@ export default function App() {
         ball.userData = { w: 0.5, d: 0.5 };
         group.add(ball);
         sim.current.walls.push(ball);
-        sim.current.target = ball; // Use ball as the target since red cube is removed
+        sim.current.target = ball;
+
+        // Add bucket for ball placement
+        const bucketGeo = new THREE.CylinderGeometry(1.0, 1.0, 1.6, 32, 1, true);
+        const bucketMat = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.8, side: THREE.DoubleSide });
+        const bucket = new THREE.Mesh(bucketGeo, bucketMat);
+        bucket.position.set(2, 0.8, -5);
+        bucket.castShadow = true;
+        bucket.receiveShadow = true;
+        bucket.userData = { w: 1.2, d: 1.2, type: 'bucket' };
+        group.add(bucket);
+        sim.current.walls.push(bucket);
+        sim.current.bucket = bucket;
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
     }, [sceneType, sceneSize, sceneComplexity, addLog]);
@@ -620,6 +690,9 @@ export default function App() {
 
     const updateRobotMovement = useCallback(() => {
         if (sim.current.isInferencing || sim.current.isTraining) return;
+        
+        // Skip if ACT executor is running a task
+        if (sim.current.actExecutor && sim.current.actExecutor.getState().isExecuting) return;
 
         const keys = sim.current.keys;
         let v = 0;
@@ -665,7 +738,7 @@ export default function App() {
         const nextZ = state.z + Math.cos(state.rotation) * state.velocity;
 
         let collided = false;
-        const robotRadius = 0.9; // Increased to cover camera offset (1.2) and body
+        const robotRadius = 0.5; // Reduced from 0.9 to allow closer approach to objects
         const checkAABB = (objX: number, objZ: number, w: number, d: number) => {
             return (nextX > objX - w / 2 - robotRadius &&
                 nextX < objX + w / 2 + robotRadius &&
@@ -690,6 +763,10 @@ export default function App() {
             state.z = nextZ;
         } else {
             state.velocity = 0;
+            // Debug log
+            if (Date.now() % 500 < 50) {
+                console.log(`[Physics] Collision detected at (${state.x.toFixed(2)}, ${state.z.toFixed(2)}), nextPos=(${nextX.toFixed(2)}, ${nextZ.toFixed(2)})`);
+            }
         }
 
         state.rotation += state.angularVelocity;
@@ -776,6 +853,36 @@ export default function App() {
     }, []);
 
     const updateArm = useCallback(() => {
+        // Use ACT Executor if available and executing
+        if (sim.current.actExecutor && sim.current.actExecutor.getState().isExecuting) {
+            sim.current.actExecutor.update();
+            if (sim.current.armController) {
+                sim.current.armController.update();
+                sim.current.armController.advancePhase(addLog);
+            }
+            
+            // Update executor state for UI
+            const state = sim.current.actExecutor.getState();
+            setActExecutorState({
+                task: state.task,
+                subTask: state.subTask,
+                isComplete: state.isComplete,
+                isExecuting: state.isExecuting
+            });
+            sim.current.prevIsExecuting = true;
+            return;
+        }
+        
+        // Sync arm state when executor stops (task completed or manually stopped)
+        if (sim.current.prevIsExecuting && sim.current.actExecutor && sim.current.armController && sim.current.arm) {
+            const armCtrlState = sim.current.armController.getState();
+            sim.current.arm.state = armCtrlState.task === 'holding' || armCtrlState.task === 'pickUp' ? 'holding' : armCtrlState.task;
+            sim.current.arm.grabbedObject = armCtrlState.grabbedObject;
+            sim.current.arm.targetRotations = { ...armCtrlState.targetRotations };
+            sim.current.prevIsExecuting = false;
+        }
+        
+        // Fallback to manual arm control
         if (!sim.current.arm || !hasArm) return;
         const arm = sim.current.arm;
 
@@ -865,10 +972,10 @@ export default function App() {
     const animate = useCallback(() => {
         sim.current.animationFrameId = requestAnimationFrame(animate);
 
+        updateArm();
         updateRobotMovement();
         updatePhysics();
         updateOnboardCamera();
-        updateArm();
 
         if (sim.current.renderer && sim.current.scene && sim.current.camera) {
             sim.current.renderer.render(sim.current.scene, sim.current.camera);
@@ -919,7 +1026,41 @@ export default function App() {
             sim.current.target.position.set(0, 0.25, -5);
         }
 
+        // Reset ACT Executor
+        if (sim.current.actExecutor) {
+            sim.current.actExecutor.reset();
+            setActExecutorState(null);
+        }
+
         addLog('Robot and target reset', 'warning');
+    };
+
+    // ACT Task Control Functions
+    const startACTTask = (task: ACTTask) => {
+        if (!sim.current.actExecutor) {
+            addLog('ACT Executor not initialized. Please enable robotic arm first.', 'error');
+            return;
+        }
+
+        if (!hasArm) {
+            addLog('Please enable robotic arm in robot configuration', 'error');
+            return;
+        }
+
+        // Update walls reference
+        sim.current.actExecutor.updateWalls(sim.current.walls);
+        
+        setActTask(task);
+        sim.current.actExecutor.startTask(task);
+        addLog(`Starting ACT task: ${task}`, 'info');
+    };
+
+    const stopACTTask = () => {
+        if (sim.current.actExecutor) {
+            sim.current.actExecutor.stop();
+            setActTask('idle');
+            setActExecutorState(null);
+        }
     };
 
     const saveDataset = () => {
@@ -1720,12 +1861,19 @@ export default function App() {
             }
 
             try {
-                if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例') {
+                if (selectedModel === '跟随网球示例' || selectedModel === '自动避障示例' || selectedModel === 'findAndPickBall' || selectedModel === 'findBucketAndDrop') {
                     addLog(`Loading ${selectedModel}...`, 'info');
                     sim.current.isInferencing = true;
                     setIsInferencing(true);
-                    addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
-                    runInference();
+                    
+                    // 启动传统算法任务
+                    if (selectedModel === 'findAndPickBall' || selectedModel === 'findBucketAndDrop') {
+                        startACTTask(selectedModel as ACTTask);
+                        addLog(`Starting traditional algorithm: ${selectedModel}...`, 'success');
+                    } else {
+                        addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
+                        runInference();
+                    }
                 } else {
                     addLog(`Loading model ${selectedModel}...`, 'info');
                     sim.current.model = await tf.loadLayersModel(`indexeddb://${selectedModel}`);
@@ -2189,7 +2337,7 @@ export default function App() {
                         </div>
 
                         <div className="space-y-3">
-                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">5. 执行推理</h3>
+                            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">5. 执行推理示例</h3>
 
                             {trainingMode === 'cloud' ? (
                                 <div className="text-xs text-purple-300 bg-purple-900/20 p-2 rounded border border-purple-500/20 mb-2">
@@ -2217,20 +2365,21 @@ export default function App() {
                                         value={selectedModel}
                                         onChange={e => setSelectedModel(e.target.value)}
                                     >
-                                        <option value="">选择训练好的模型...</option>
-                                        {trainedModels.map((model, i) => (
-                                            <option key={i} value={model.name}>{model.name} (Ready)</option>
-                                        ))}
+                                        <option value="">选择推理模式...</option>
+                                        <option value="跟随网球示例">🎾 跟随网球示例（ready）</option>
+                                        <option value="自动避障示例">🛡️ 避障示例（ready）</option>
+                                        {!hasArm ? (
+                                            <>
+                                                <option value="findAndPickBall" disabled>🎯 找到小球并拾取（需机械臂）</option>
+                                                <option value="findBucketAndDrop" disabled>🗑️ 找到红桶放下小球（需机械臂）</option>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <option value="findAndPickBall">🎯 找到小球并拾取（ready）</option>
+                                                <option value="findBucketAndDrop">🗑️ 找到红桶放下小球（ready）</option>
+                                            </>
+                                        )}
                                     </select>
-                                    <div className="flex gap-2">
-                                        <button onClick={handleExportModels} disabled={trainedModels.length === 0} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-1.5 rounded text-xs transition-all disabled:opacity-50">
-                                            导出模型
-                                        </button>
-                                        <label className="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-1.5 rounded text-xs transition-all flex items-center justify-center">
-                                            导入文件夹
-                                            <input type="file" webkitdirectory="" directory="" multiple onChange={handleImportModelsFolder} className="hidden" />
-                                        </label>
-                                    </div>
                                 </div>
                             )}
 
@@ -2245,6 +2394,34 @@ export default function App() {
                                 <input type="checkbox" id="show-attention" checked={showAttention} onChange={(e) => setShowAttention(e.target.checked)} className="rounded bg-slate-800 border-slate-600" />
                                 <label htmlFor="show-attention">显示注意力热力<span onClick={() => setTrainingMode(trainingMode === 'frontend' ? 'cloud' : 'frontend')}>图</span></label>
                             </div>
+
+                            {actExecutorState?.isExecuting && (
+                                <div className="border-t border-slate-800 pt-3 mt-3">
+                                    <div className="text-xs text-slate-400 mb-2">传统算法任务执行中:</div>
+                                    <div className="text-xs mono bg-slate-900/50 p-2 rounded border border-slate-800 mb-2">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="text-slate-400">任务:</span>
+                                            <span className="text-blue-400">{actExecutorState.task}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="text-slate-400">子任务:</span>
+                                            <span className="text-purple-400">{actExecutorState.subTask}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-400">状态:</span>
+                                            <span className={actExecutorState.isComplete ? 'text-green-400' : 'text-yellow-400'}>
+                                                {actExecutorState.isComplete ? '✓ 完成' : '⟳ 执行中...'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={stopACTTask}
+                                        className="w-full bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs font-medium transition-all"
+                                    >
+                                        ✕ 停止任务
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </aside>

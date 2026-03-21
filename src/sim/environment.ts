@@ -93,5 +93,16 @@ export function updateEnvironment(
     group.add(ball);
     walls.push(ball);
 
+    // Add bucket for ball placement
+    const bucketGeo = new THREE.CylinderGeometry(1.0, 1.2, 1.6, 32);
+    const bucketMat = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.8 });
+    const bucket = new THREE.Mesh(bucketGeo, bucketMat);
+    bucket.position.set(-halfSize/2 + 3.5, 0.8, halfSize/2 - 1.5);
+    bucket.castShadow = true;
+    bucket.receiveShadow = true;
+    bucket.userData = { w: 1.2, d: 1.2, type: 'bucket' };
+    group.add(bucket);
+    walls.push(bucket);
+
     return { walls, group, target: null };
 }
