@@ -36,6 +36,10 @@ export default function App() {
     });
     const [speed, setSpeed] = useState(() => Number(localStorage.getItem('speed')) || 0.1);
     const [turnSpeed, setTurnSpeed] = useState(() => Number(localStorage.getItem('turnSpeed')) || 0.05);
+    const [ballMotionMode, setBallMotionMode] = useState<'fixed' | 'random' | 'mixed'>(() => (localStorage.getItem('ballMotionMode') as any) || 'fixed');
+    const [ballRadius, setBallRadius] = useState(() => Number(localStorage.getItem('ballRadius')) || 5);
+    const [ballSpeed, setBallSpeed] = useState(() => Number(localStorage.getItem('ballSpeed')) || 1);
+    const [ballRandomIntensity, setBallRandomIntensity] = useState(() => Number(localStorage.getItem('ballRandomIntensity')) || 0.5);
     const [logs, setLogs] = useState<{ message: string, type: string, time: string }[]>([
         { message: 'System initialized. Waiting for commands...', type: 'info', time: new Date().toLocaleTimeString() }
     ]);
@@ -51,7 +55,11 @@ export default function App() {
         localStorage.setItem('lightPos', JSON.stringify(lightPos));
         localStorage.setItem('speed', speed.toString());
         localStorage.setItem('turnSpeed', turnSpeed.toString());
-    }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed]);
+        localStorage.setItem('ballMotionMode', ballMotionMode);
+        localStorage.setItem('ballRadius', ballRadius.toString());
+        localStorage.setItem('ballSpeed', ballSpeed.toString());
+        localStorage.setItem('ballRandomIntensity', ballRandomIntensity.toString());
+    }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed, ballMotionMode, ballRadius, ballSpeed, ballRandomIntensity]);
 
     // Cloud Training State
     const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
@@ -103,7 +111,12 @@ export default function App() {
         stuckCounter: 0,
         actionBuffer: [] as any[],
         lastInferenceLogTime: 0,
-        lastManualLogTime: 0
+        lastManualLogTime: 0,
+        ballMotionTime: 0,
+        ballPrevX: 0,
+        ballPrevZ: 0,
+        ballVelX: 0,
+        ballVelZ: 0
     });
 
     const isAtBottom = useRef(true);
@@ -529,28 +542,36 @@ export default function App() {
         // state: [x, y, angle, speed, ballDist, isColliding, ...zeros] (14 dims)
 
         const x = sim.current.robotState.x;
-        const z = sim.current.robotState.z; // treating z as y in 2D
+        const z = sim.current.robotState.z;
         const angle = sim.current.robotState.rotation;
         const speed = sim.current.robotState.velocity;
 
-        const targetDist = Math.hypot(sim.current.target.position.x - x, sim.current.target.position.z - z);
+        const targetX = sim.current.target.position.x;
+        const targetZ = sim.current.target.position.z;
+        const targetDist = Math.hypot(targetX - x, targetZ - z);
 
-        const state = new Array(14).fill(0);
+        // Calculate relative angle to target
+        const angleToTarget = Math.atan2(targetX - x, targetZ - z);
+        let relativeAngle = angleToTarget - angle;
+        // Normalize angle to [-PI, PI]
+        while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
+        while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
+
+        const state = new Array(12).fill(0);
         state[0] = x;
         state[1] = z;
-        state[2] = angle;
-        state[3] = speed;
-        state[4] = targetDist;
-        state[5] = sim.current.isColliding ? 1.0 : 0.0; // Explicitly tell model we are colliding
+        state[2] = Math.sin(angle);
+        state[3] = Math.cos(angle);
+        state[4] = speed;
+        state[5] = targetX;
+        state[6] = targetZ;
+        state[7] = sim.current.ballVelX || 0;
+        state[8] = sim.current.ballVelZ || 0;
+        state[9] = targetDist;
+        state[10] = relativeAngle;
+        state[11] = sim.current.isColliding ? 1.0 : 0.0;
 
-        const envState = new Array(7).fill(0);
-        envState[0] = x;
-        envState[1] = z;
-        envState[2] = angle;
-        envState[3] = speed;
-        envState[4] = sim.current.isColliding ? 1 : 0;
-        envState[5] = 0; // Forward distance placeholder
-        envState[6] = targetDist;
+        const envState = [...state]; // Use same state for envState placeholder
 
         // Action: [up, down, left, right, stop] (one-hot or similar)
         // Reference uses commandToActionVec which returns 5-dim vector.
@@ -725,6 +746,56 @@ export default function App() {
         if (velocityRef.current) velocityRef.current.textContent = (Math.abs(state.velocity) * 10).toFixed(1);
     }, []);
 
+    const updateBallMotion = useCallback(() => {
+        if (!sim.current.target) return;
+
+        const dt = 0.016; // ~60fps
+        sim.current.ballMotionTime += dt;
+
+        const prevX = sim.current.target.position.x;
+        const prevZ = sim.current.target.position.z;
+
+        let newX = prevX;
+        let newZ = prevZ;
+
+        if (ballMotionMode === 'fixed') {
+            // 固定航迹：圆形运动
+            const angle = sim.current.ballMotionTime * ballSpeed;
+            newX = ballRadius * Math.cos(angle);
+            newZ = ballRadius * Math.sin(angle);
+        } else if (ballMotionMode === 'random') {
+            // 随机运动：随机游走
+            const randomX = (Math.random() - 0.5) * ballRandomIntensity * ballSpeed;
+            const randomZ = (Math.random() - 0.5) * ballRandomIntensity * ballSpeed;
+            newX = prevX + randomX;
+            newZ = prevZ + randomZ;
+
+            // 限制在场景范围内
+            const maxRange = 8;
+            newX = Math.max(-maxRange, Math.min(maxRange, newX));
+            newZ = Math.max(-maxRange, Math.min(maxRange, newZ));
+        } else if (ballMotionMode === 'mixed') {
+            // 混合运动：固定航迹 + 随机扰动
+            const angle = sim.current.ballMotionTime * ballSpeed;
+            const baseX = ballRadius * Math.cos(angle);
+            const baseZ = ballRadius * Math.sin(angle);
+
+            const randomX = (Math.random() - 0.5) * ballRandomIntensity * 0.5;
+            const randomZ = (Math.random() - 0.5) * ballRandomIntensity * 0.5;
+
+            newX = baseX + randomX;
+            newZ = baseZ + randomZ;
+        }
+
+        // 计算小球速度
+        sim.current.ballVelX = (newX - prevX) / dt;
+        sim.current.ballVelZ = (newZ - prevZ) / dt;
+
+        // 更新小球位置
+        sim.current.target.position.x = newX;
+        sim.current.target.position.z = newZ;
+    }, [ballMotionMode, ballRadius, ballSpeed, ballRandomIntensity]);
+
     const updateOnboardCamera = useCallback(() => {
         const { onboardCamera, onboardRenderTarget, renderer, scene, robotState } = sim.current;
         const canvas = cameraCanvasRef.current;
@@ -867,13 +938,14 @@ export default function App() {
 
         updateRobotMovement();
         updatePhysics();
+        updateBallMotion();
         updateOnboardCamera();
         updateArm();
 
         if (sim.current.renderer && sim.current.scene && sim.current.camera) {
             sim.current.renderer.render(sim.current.scene, sim.current.camera);
         }
-    }, [updateRobotMovement, updatePhysics, updateOnboardCamera, updateArm]);
+    }, [updateRobotMovement, updatePhysics, updateBallMotion, updateOnboardCamera, updateArm]);
 
     useEffect(() => {
         sim.current.animationFrameId = requestAnimationFrame(animate);
@@ -1616,12 +1688,27 @@ export default function App() {
         const dz = target.position.z - robotState.z;
         const targetDist = Math.sqrt(dx * dx + dz * dz);
 
-        const state = new Array(14).fill(0);
+        // Calculate relative angle to target
+        const angleToTarget = Math.atan2(dx, dz);
+        let relativeAngle = angleToTarget - robotState.rotation;
+        // Normalize angle to [-PI, PI]
+        while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
+        while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
+
+        // Build 12-dimensional state (matching recordFrame structure)
+        const state = new Array(12).fill(0);
         state[0] = robotState.x;
         state[1] = robotState.z;
-        state[2] = robotState.rotation;
-        state[3] = robotState.velocity;
-        state[4] = targetDist;
+        state[2] = Math.sin(robotState.rotation);
+        state[3] = Math.cos(robotState.rotation);
+        state[4] = robotState.velocity;
+        state[5] = target.position.x;
+        state[6] = target.position.z;
+        state[7] = sim.current.ballVelX || 0;
+        state[8] = sim.current.ballVelZ || 0;
+        state[9] = targetDist;
+        state[10] = relativeAngle;
+        state[11] = sim.current.isColliding ? 1.0 : 0.0;
 
         const prediction = actService.predict(model, image, state);
 
@@ -2000,6 +2087,35 @@ export default function App() {
                                         <input type="range" min="0.01" max="0.2" step="0.01" value={turnSpeed} onChange={(e) => setTurnSpeed(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
                                         <span className="w-8 text-right">{turnSpeed.toFixed(2)}</span>
                                     </label>
+                                </div>
+
+                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                                    <div className="font-semibold text-slate-300 mb-2">小球运动控制</div>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">运动模式:</span>
+                                        <select value={ballMotionMode} onChange={(e) => setBallMotionMode(e.target.value as any)} className="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                                            <option value="fixed">固定航迹</option>
+                                            <option value="random">随机运动</option>
+                                            <option value="mixed">混合运动</option>
+                                        </select>
+                               </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">半径:</span>
+                                        <input type="range" min="1" max="10" step="0.5" value={ballRadius} onChange={(e) => setBallRadius(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
+                                        <span className="w-8 text-right">{ballRadius.toFixed(1)}</span>
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">速度:</span>
+                                        <input type="range" min="0.1" max="3" step="0.1" value={ballSpeed} onChange={(e) => setBallSpeed(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
+                                        <span className="w-8 text-right">{ballSpeed.toFixed(1)}</span>
+                                    </label>
+                                    {(ballMotionMode === 'random' || ballMotionMode === 'mixed') && (
+                                        <label className="flex items-center gap-2">
+                                            <span className="w-16">随机强度:</span>
+                                            <input type="range" min="0" max="2" step="0.1" value={ballRandomIntensity} onChange={(e) => setBallRandomIntensity(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
+                                            <span className="w-8 text-right">{ballRandomIntensity.toFixed(1)}</span>
+                                        </label>
+                                    )}
                                 </div>
                                 <div className="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
                                     {hasArm ? (
