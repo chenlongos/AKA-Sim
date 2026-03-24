@@ -34,7 +34,7 @@ export const actService = {
 
     createModel() {
         const imageInput = tf.input({shape: [64, 64, 3]});
-        const stateInput = tf.input({shape: [12]});
+        const stateInput = tf.input({shape: [16]});  // 从 12 改为 16
 
         const h1 = tf.layers.conv2d({filters: 16, kernelSize: 3, activation: 'relu'}).apply(imageInput) as tf.SymbolicTensor;
         const h2 = tf.layers.maxPooling2d({poolSize: 2}).apply(h1) as tf.SymbolicTensor;
