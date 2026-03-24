@@ -7,6 +7,7 @@ import { CloudModel, CloudDataset, CloudTrainingStatus, SimulationState, RobotCo
 import { createScene, createCamera, createRenderer, createLights, createFloor } from './sim/scene';
 import { createRobot } from './sim/robot';
 import { updateEnvironment } from './sim/environment';
+import { FeatureAdapter } from './services/featureService';
 import { tr } from 'motion/react-client';
 
 export default function App() {
@@ -549,97 +550,19 @@ export default function App() {
         // Use small canvas for Base64 - much faster
         const imageBase64 = smallCanvasRef.current?.toDataURL('image/jpeg', 0.7).split(',')[1];
 
-        const x = sim.current.robotState.x;
-        const z = sim.current.robotState.z;
-        const angle = sim.current.robotState.rotation;
-        const speed = sim.current.robotState.velocity;
-
-        const targetX = sim.current.target.position.x;
-        const targetZ = sim.current.target.position.z;
-
-        // 计算摄像头位置（向前偏移 0.85 单位）
-        const dirX = Math.sin(angle);
-        const dirZ = Math.cos(angle);
-        const camX = x + dirX * 0.85;
-        const camZ = z + dirZ * 0.85;
-
-        // 计算相对位置
-        const dx = targetX - camX;
-        const dz = targetZ - camZ;
-        const targetDist = Math.hypot(dx, dz);
-
-        // 计算相对角度
-        const angleToTarget = Math.atan2(dx, dz);
-        let relativeAngle = angleToTarget - angle;
-        // Normalize angle to [-PI, PI]
-        while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
-        while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
-
-        // 计算可见性（FOV = 45°）
-        const FOV = Math.PI / 4;
-        const isVisible = Math.abs(relativeAngle) <= FOV;
-
-        // 计算是否被遮挡（射线投射）
-        let isBlocked = false;
-        if (isVisible && targetDist > 1.0) {
-            const steps = Math.floor(targetDist / 0.5);
-            const stepX = dx / steps;
-            const stepZ = dz / steps;
-            let px = camX;
-            let pz = camZ;
-
-            for (let i = 1; i < steps; i++) {
-                px += stepX;
-                pz += stepZ;
-
-                // 检查与墙的碰撞
-                for (const wall of sim.current.walls) {
-                    if (wall === sim.current.target) continue;
-                    const w = wall.userData.w;
-                    const depth = wall.userData.d;
-                    const wx = wall.position.x;
-                    const wz = wall.position.z;
-
-                    if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
-                        isBlocked = true;
-                        break;
-                    }
-                }
-                if (isBlocked) break;
-            }
-        }
-
-        // 保存计算的特征
-        sim.current.isVisible = isVisible;
-        sim.current.isBlocked = isBlocked;
-
-        // 16 维状态向量（扩展版本）
-        const state = new Array(16).fill(0);
-        state[0] = x;                                      // 机器人 x
-        state[1] = z;                                      // 机器人 z
-        state[2] = Math.sin(angle);                        // sin(θ)
-        state[3] = Math.cos(angle);                        // cos(θ)
-        state[4] = speed;                                  // 机器人速度
-        state[5] = targetX;                                // 小球 x
-        state[6] = targetZ;                                // 小球 z
-        state[7] = sim.current.ballVelX || 0;              // 小球速度 x
-        state[8] = sim.current.ballVelZ || 0;              // 小球速度 z
-        state[9] = targetDist;                             // 距离
-        state[10] = relativeAngle;                         // 相对角度
-        state[11] = sim.current.isColliding ? 1.0 : 0.0;   // 碰撞标志
-        state[12] = isVisible ? 1.0 : 0.0;                 // 可见性 ← 新增
-        state[13] = isBlocked ? 1.0 : 0.0;                 // 被遮挡 ← 新增
-        state[14] = sim.current.ballAccelX || 0;           // 小球加速度 x ← 新增
-        state[15] = sim.current.ballAccelZ || 0;           // 小球加速度 z ← 新增
+        // 使用特征适配器获取 16 维状态 (当前系统契约)
+        const state = FeatureAdapter.getFeatures(16, {
+            ...sim.current,
+            robotState: sim.current.robotState
+        });
 
         const envState = [...state];
 
-        let action = [0, 0, 0, 0, 1]; // Default stop
-        const keys = sim.current.keys;
-        if (keys['w'] || keys['arrowup']) action = [1, 0, 0, 0, 0];
-        else if (keys['s'] || keys['arrowdown']) action = [0, 1, 0, 0, 0];
-        else if (keys['a'] || keys['arrowleft']) action = [0, 0, 1, 0, 0];
-        else if (keys['d'] || keys['arrowright']) action = [0, 0, 0, 1, 0];
+        // 录制实际的连续速度/角速度（兼容手动控制和规则控制器）
+        const action = [
+            sim.current.robotState.velocity,        // 实际线速度
+            sim.current.robotState.angularVelocity   // 实际角速度
+        ];
 
         const frame = {
             state: state,
@@ -1073,7 +996,7 @@ export default function App() {
         const dataset = {
             metadata: {
                 robot_type: "diff_drive",
-                action_space: "discrete_5",
+                action_space: "continuous_2",
                 fps: 10,
                 created: new Date().toISOString()
             },
