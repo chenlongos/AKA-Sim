@@ -1060,13 +1060,8 @@ export default function App() {
                 .filter(key => key.startsWith('indexeddb://'))
                 .map(key => ({ name: key.replace('indexeddb://', '') }));
 
-            // 检查是否有旧模型（12维状态）
-            const oldModels = loadedModels.filter(m =>
-                m.name.includes('v1') || m.name.includes('v2') || m.name.includes('v3')
-            );
-
-            if (oldModels.length > 0) {
-                addLog('⚠️ 检测到旧版本模型（12维状态）。由于状态维度已升级到16维，这些模型不兼容。请重新训练新模型。', 'warning');
+            if (loadedModels.length > 0) {
+                addLog(`Detected ${loadedModels.length} trained models. Multi-version adapter enabled.`, 'info');
             }
 
             setTrainedModels([
@@ -1684,78 +1679,18 @@ export default function App() {
         const image = captureImage();
         if (!image) return;
 
-        const dx = target.position.x - robotState.x;
-        const dz = target.position.z - robotState.z;
-        const targetDist = Math.sqrt(dx * dx + dz * dz);
+        // 根据加载的模型维度，使用适配器提取特征
+        const stateDim = (sim.current as any).modelStateDim || 16;
+        const state = FeatureAdapter.getFeatures(stateDim, {
+            ...sim.current,
+            robotState: sim.current.robotState
+        });
 
-        // 计算摄像头位置
-        const dirX = Math.sin(robotState.rotation);
-        const dirZ = Math.cos(robotState.rotation);
-        const camX = robotState.x + dirX * 0.85;
-        const camZ = robotState.z + dirZ * 0.85;
-
-        // 计算相对位置
-        const relDx = target.position.x - camX;
-        const relDz = target.position.z - camZ;
-
-        // Calculate relative angle to target
-        const angleToTarget = Math.atan2(relDx, relDz);
-        let relativeAngle = angleToTarget - robotState.rotation;
-        // Normalize angle to [-PI, PI]
-        while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
-        while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
-
-        // 计算可见性
-        const FOV = Math.PI / 4;
-        const isVisible = Math.abs(relativeAngle) <= FOV;
-
-        // 计算是否被遮挡
-        let isBlocked = false;
-        if (isVisible && targetDist > 1.0) {
-            const steps = Math.floor(targetDist / 0.5);
-            const stepX = relDx / steps;
-            const stepZ = relDz / steps;
-            let px = camX;
-            let pz = camZ;
-
-            for (let i = 1; i < steps; i++) {
-                px += stepX;
-                pz += stepZ;
-
-                for (const wall of sim.current.walls) {
-                    if (wall === target) continue;
-                    const w = wall.userData.w;
-                    const depth = wall.userData.d;
-                    const wx = wall.position.x;
-                    const wz = wall.position.z;
-
-                    if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
-                        isBlocked = true;
-                        break;
-                    }
-                }
-                if (isBlocked) break;
-            }
-        }
-
-        // Build 16-dimensional state (matching recordFrame structure)
-        const state = new Array(16).fill(0);
-        state[0] = robotState.x;
-        state[1] = robotState.z;
-        state[2] = Math.sin(robotState.rotation);
-        state[3] = Math.cos(robotState.rotation);
-        state[4] = robotState.velocity;
-        state[5] = target.position.x;
-        state[6] = target.position.z;
-        state[7] = sim.current.ballVelX || 0;
-        state[8] = sim.current.ballVelZ || 0;
-        state[9] = targetDist;
-        state[10] = relativeAngle;
-        state[11] = sim.current.isColliding ? 1.0 : 0.0;
-        state[12] = isVisible ? 1.0 : 0.0;                 // 可见性
-        state[13] = isBlocked ? 1.0 : 0.0;                 // 被遮挡
-        state[14] = sim.current.ballAccelX || 0;           // 小球加速度 x
-        state[15] = sim.current.ballAccelZ || 0;           // 小球加速度 z
+        // 直接计算距离，不依赖状态向量中的索引（不同版本索引不同）
+        const actualDist = Math.sqrt(
+            Math.pow(target.position.x - robotState.x, 2) +
+            Math.pow(target.position.z - robotState.z, 2)
+        );
 
         const prediction = actService.predict(model, image, state);
 
@@ -1825,7 +1760,7 @@ export default function App() {
         });
 
         // Check goal
-        if (targetDist < 1.0) {
+        if (actualDist < 1.0) {
             addLog('Target reached!', 'success');
             target.position.set(
                 (Math.random() - 0.5) * 12,
@@ -1862,7 +1797,25 @@ export default function App() {
                     runInference();
                 } else {
                     addLog(`Loading model ${selectedModel}...`, 'info');
-                    sim.current.model = await tf.loadLayersModel(`indexeddb://${selectedModel}`);
+                    const model = await tf.loadLayersModel(`indexeddb://${selectedModel}`);
+                    sim.current.model = model;
+
+                    // 动态获取模型的输入状态维度
+                    // ACT 模型有两个输入：[image, state]
+                    // model.inputs[1] 是状态输入层
+                    try {
+                        const stateDim = model.inputs[1].shape[1];
+                        (sim.current as any).modelStateDim = stateDim;
+                        if (stateDim === 14) {
+                            addLog(`模型已加载，状态维度: ${stateDim}（V1 旧版特征映射）`, 'warning');
+                        } else {
+                            addLog(`模型已加载，状态维度: ${stateDim}`, 'success');
+                        }
+                    } catch (e) {
+                        (sim.current as any).modelStateDim = 16; // 降级默认值用当前版本
+                        addLog('无法检测模型维度，默认使用 16 维。', 'warning');
+                    }
+
                     sim.current.isInferencing = true;
                     setIsInferencing(true);
                     addLog(`Starting Frontend ACT inference with ${selectedModel}...`, 'success');
