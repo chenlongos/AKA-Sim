@@ -59,6 +59,16 @@ interface SidebarLeftProps {
     isInferencing: boolean;
     showAttention: boolean;
     setShowAttention: (show: boolean) => void;
+
+    // Ball Motion Props
+    ballMotionMode: 'fixed' | 'random' | 'mixed';
+    setBallMotionMode: (mode: 'fixed' | 'random' | 'mixed') => void;
+    ballRadius: number;
+    setBallRadius: (radius: number) => void;
+    ballSpeed: number;
+    setBallSpeed: (speed: number) => void;
+    ballRandomIntensity: number;
+    setBallRandomIntensity: (intensity: number) => void;
 }
 
 export const SidebarLeft: React.FC<SidebarLeftProps> = ({
@@ -70,7 +80,8 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
     speed, setSpeed, turnSpeed, setTurnSpeed, simRef, sendCommand,
     isRecording, toggleRecording, episodesCount, frameCount, actionCount, saveDataset,
     startTraining, isTraining, trainingProgress, trainingStatus,
-    trainedModel, startInference, isInferencing, showAttention, setShowAttention
+    trainedModel, startInference, isInferencing, showAttention, setShowAttention,
+    ballMotionMode, setBallMotionMode, ballRadius, setBallRadius, ballSpeed, setBallSpeed, ballRandomIntensity, setBallRandomIntensity
 }) => {
     return (
         <aside className="w-80 glass-panel border-r border-slate-800 flex flex-col overflow-y-auto">
@@ -216,6 +227,65 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                         <label className="flex items-center gap-2">
                             <span className="w-4">Z:</span> <input type="range" min="-30" max="30" value={lightPos.z} onChange={e => setLightPos({...lightPos, z: Number(e.target.value)})} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
                         </label>
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">🎾 小球运动控制</h3>
+                    <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label className="block">
+                            <span className="text-slate-300 mb-1 block">运动模式</span>
+                            <select
+                                value={ballMotionMode}
+                                onChange={(e) => setBallMotionMode(e.target.value as 'fixed' | 'random' | 'mixed')}
+                                className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="fixed">固定航迹 (Fixed)</option>
+                                <option value="random">随机运动 (Random)</option>
+                                <option value="mixed">混合运动 (Mixed)</option>
+                            </select>
+                        </label>
+                        <label className="flex items-center gap-2">
+                            <span className="w-12">半径:</span>
+                            <input
+                                type="range"
+                                min="1"
+                                max="10"
+                                step="0.5"
+                                value={ballRadius}
+                                onChange={(e) => setBallRadius(Number(e.target.value))}
+                                className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                            <span className="w-8 text-right">{ballRadius.toFixed(1)}</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                            <span className="w-12">速度:</span>
+                            <input
+                                type="range"
+                                min="0.1"
+                                max="3"
+                                step="0.1"
+                                value={ballSpeed}
+                                onChange={(e) => setBallSpeed(Number(e.target.value))}
+                                className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                            <span className="w-8 text-right">{ballSpeed.toFixed(1)}</span>
+                        </label>
+                        {(ballMotionMode === 'random' || ballMotionMode === 'mixed') && (
+                            <label className="flex items-center gap-2">
+                                <span className="w-12">随机:</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="2"
+                                    step="0.1"
+                                    value={ballRandomIntensity}
+                                    onChange={(e) => setBallRandomIntensity(Number(e.target.value))}
+                                    className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                                <span className="w-8 text-right">{ballRandomIntensity.toFixed(1)}</span>
+                            </label>
+                        )}
                     </div>
                 </div>
 

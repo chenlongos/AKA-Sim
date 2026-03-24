@@ -38,7 +38,7 @@ export default function App() {
     const [turnSpeed, setTurnSpeed] = useState(() => Number(localStorage.getItem('turnSpeed')) || 0.05);
     const [ballMotionMode, setBallMotionMode] = useState<'fixed' | 'random' | 'mixed'>(() => (localStorage.getItem('ballMotionMode') as any) || 'fixed');
     const [ballRadius, setBallRadius] = useState(() => Number(localStorage.getItem('ballRadius')) || 5);
-    const [ballSpeed, setBallSpeed] = useState(() => Number(localStorage.getItem('ballSpeed')) || 1);
+    const [ballSpeed, setBallSpeed] = useState(() => Number(localStorage.getItem('ballSpeed')) || 0.3);
     const [ballRandomIntensity, setBallRandomIntensity] = useState(() => Number(localStorage.getItem('ballRandomIntensity')) || 0.5);
     const [logs, setLogs] = useState<{ message: string, type: string, time: string }[]>([
         { message: 'System initialized. Waiting for commands...', type: 'info', time: new Date().toLocaleTimeString() }
@@ -116,7 +116,14 @@ export default function App() {
         ballPrevX: 0,
         ballPrevZ: 0,
         ballVelX: 0,
-        ballVelZ: 0
+        ballVelZ: 0,
+        ballPrevVelX: 0,
+        ballPrevVelZ: 0,
+        ballAccelX: 0,
+        ballAccelZ: 0,
+        isVisible: false,
+        isBlocked: false,
+        sceneBoundary: 10 // 默认值（halfSize）
     });
 
     const isAtBottom = useRef(true);
@@ -238,8 +245,11 @@ export default function App() {
             
             if (intersects.length > 0) {
                 const point = intersects[0].point;
-                sim.current.target.position.x = point.x;
-                sim.current.target.position.z = point.z;
+                const boundary = sim.current.sceneBoundary || 9;
+
+                // 限制拖拽范围，不让小球穿墙
+                sim.current.target.position.x = Math.max(-boundary, Math.min(boundary, point.x));
+                sim.current.target.position.z = Math.max(-boundary, Math.min(boundary, point.z));
             }
         };
 
@@ -319,6 +329,7 @@ export default function App() {
         if (sceneSize === 'large') sizeVal = 30;
 
         const halfSize = sizeVal / 2;
+        sim.current.sceneBoundary = halfSize - 1.0; // 留出 1m 的安全距离
 
         const createTexture = (type: string) => {
             const canvas = document.createElement('canvas');
@@ -538,9 +549,6 @@ export default function App() {
         // Use small canvas for Base64 - much faster
         const imageBase64 = smallCanvasRef.current?.toDataURL('image/jpeg', 0.7).split(',')[1];
 
-        // Match reference state structure:
-        // state: [x, y, angle, speed, ballDist, isColliding, ...zeros] (14 dims)
-
         const x = sim.current.robotState.x;
         const z = sim.current.robotState.z;
         const angle = sim.current.robotState.rotation;
@@ -548,38 +556,83 @@ export default function App() {
 
         const targetX = sim.current.target.position.x;
         const targetZ = sim.current.target.position.z;
-        const targetDist = Math.hypot(targetX - x, targetZ - z);
 
-        // Calculate relative angle to target
-        const angleToTarget = Math.atan2(targetX - x, targetZ - z);
+        // 计算摄像头位置（向前偏移 0.85 单位）
+        const dirX = Math.sin(angle);
+        const dirZ = Math.cos(angle);
+        const camX = x + dirX * 0.85;
+        const camZ = z + dirZ * 0.85;
+
+        // 计算相对位置
+        const dx = targetX - camX;
+        const dz = targetZ - camZ;
+        const targetDist = Math.hypot(dx, dz);
+
+        // 计算相对角度
+        const angleToTarget = Math.atan2(dx, dz);
         let relativeAngle = angleToTarget - angle;
         // Normalize angle to [-PI, PI]
         while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
         while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
 
-        const state = new Array(12).fill(0);
-        state[0] = x;
-        state[1] = z;
-        state[2] = Math.sin(angle);
-        state[3] = Math.cos(angle);
-        state[4] = speed;
-        state[5] = targetX;
-        state[6] = targetZ;
-        state[7] = sim.current.ballVelX || 0;
-        state[8] = sim.current.ballVelZ || 0;
-        state[9] = targetDist;
-        state[10] = relativeAngle;
-        state[11] = sim.current.isColliding ? 1.0 : 0.0;
+        // 计算可见性（FOV = 45°）
+        const FOV = Math.PI / 4;
+        const isVisible = Math.abs(relativeAngle) <= FOV;
 
-        const envState = [...state]; // Use same state for envState placeholder
+        // 计算是否被遮挡（射线投射）
+        let isBlocked = false;
+        if (isVisible && targetDist > 1.0) {
+            const steps = Math.floor(targetDist / 0.5);
+            const stepX = dx / steps;
+            const stepZ = dz / steps;
+            let px = camX;
+            let pz = camZ;
 
-        // Action: [up, down, left, right, stop] (one-hot or similar)
-        // Reference uses commandToActionVec which returns 5-dim vector.
-        // Our current action is [velocity, angularVelocity].
-        // We need to map continuous controls to discrete if we want to match reference exactly,
-        // OR ensure the backend handles continuous.
-        // The reference metadata says "action_space: discrete_5".
-        // So we should map our keys to discrete actions.
+            for (let i = 1; i < steps; i++) {
+                px += stepX;
+                pz += stepZ;
+
+                // 检查与墙的碰撞
+                for (const wall of sim.current.walls) {
+                    if (wall === sim.current.target) continue;
+                    const w = wall.userData.w;
+                    const depth = wall.userData.d;
+                    const wx = wall.position.x;
+                    const wz = wall.position.z;
+
+                    if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
+                        isBlocked = true;
+                        break;
+                    }
+                }
+                if (isBlocked) break;
+            }
+        }
+
+        // 保存计算的特征
+        sim.current.isVisible = isVisible;
+        sim.current.isBlocked = isBlocked;
+
+        // 16 维状态向量（扩展版本）
+        const state = new Array(16).fill(0);
+        state[0] = x;                                      // 机器人 x
+        state[1] = z;                                      // 机器人 z
+        state[2] = Math.sin(angle);                        // sin(θ)
+        state[3] = Math.cos(angle);                        // cos(θ)
+        state[4] = speed;                                  // 机器人速度
+        state[5] = targetX;                                // 小球 x
+        state[6] = targetZ;                                // 小球 z
+        state[7] = sim.current.ballVelX || 0;              // 小球速度 x
+        state[8] = sim.current.ballVelZ || 0;              // 小球速度 z
+        state[9] = targetDist;                             // 距离
+        state[10] = relativeAngle;                         // 相对角度
+        state[11] = sim.current.isColliding ? 1.0 : 0.0;   // 碰撞标志
+        state[12] = isVisible ? 1.0 : 0.0;                 // 可见性 ← 新增
+        state[13] = isBlocked ? 1.0 : 0.0;                 // 被遮挡 ← 新增
+        state[14] = sim.current.ballAccelX || 0;           // 小球加速度 x ← 新增
+        state[15] = sim.current.ballAccelZ || 0;           // 小球加速度 z ← 新增
+
+        const envState = [...state];
 
         let action = [0, 0, 0, 0, 1]; // Default stop
         const keys = sim.current.keys;
@@ -749,6 +802,9 @@ export default function App() {
     const updateBallMotion = useCallback(() => {
         if (!sim.current.target) return;
 
+        // 手动模式下不自动更新小球位置
+        if (ballMotionMode === 'manual') return;
+
         const dt = 0.016; // ~60fps
         sim.current.ballMotionTime += dt;
 
@@ -758,27 +814,27 @@ export default function App() {
         let newX = prevX;
         let newZ = prevZ;
 
+        const boundary = sim.current.sceneBoundary || 9;
+
         if (ballMotionMode === 'fixed') {
             // 固定航迹：圆形运动
+            // 半径不能超过边界
+            const effectiveRadius = Math.min(ballRadius, boundary);
             const angle = sim.current.ballMotionTime * ballSpeed;
-            newX = ballRadius * Math.cos(angle);
-            newZ = ballRadius * Math.sin(angle);
+            newX = effectiveRadius * Math.cos(angle);
+            newZ = effectiveRadius * Math.sin(angle);
         } else if (ballMotionMode === 'random') {
             // 随机运动：随机游走
             const randomX = (Math.random() - 0.5) * ballRandomIntensity * ballSpeed;
             const randomZ = (Math.random() - 0.5) * ballRandomIntensity * ballSpeed;
             newX = prevX + randomX;
             newZ = prevZ + randomZ;
-
-            // 限制在场景范围内
-            const maxRange = 8;
-            newX = Math.max(-maxRange, Math.min(maxRange, newX));
-            newZ = Math.max(-maxRange, Math.min(maxRange, newZ));
         } else if (ballMotionMode === 'mixed') {
             // 混合运动：固定航迹 + 随机扰动
+            const effectiveRadius = Math.min(ballRadius, boundary);
             const angle = sim.current.ballMotionTime * ballSpeed;
-            const baseX = ballRadius * Math.cos(angle);
-            const baseZ = ballRadius * Math.sin(angle);
+            const baseX = effectiveRadius * Math.cos(angle);
+            const baseZ = effectiveRadius * Math.sin(angle);
 
             const randomX = (Math.random() - 0.5) * ballRandomIntensity * 0.5;
             const randomZ = (Math.random() - 0.5) * ballRandomIntensity * 0.5;
@@ -787,9 +843,21 @@ export default function App() {
             newZ = baseZ + randomZ;
         }
 
+        // 统一边界限制（所有模式）
+        newX = Math.max(-boundary, Math.min(boundary, newX));
+        newZ = Math.max(-boundary, Math.min(boundary, newZ));
+
         // 计算小球速度
         sim.current.ballVelX = (newX - prevX) / dt;
         sim.current.ballVelZ = (newZ - prevZ) / dt;
+
+        // 计算小球加速度
+        sim.current.ballAccelX = (sim.current.ballVelX - sim.current.ballPrevVelX) / dt;
+        sim.current.ballAccelZ = (sim.current.ballVelZ - sim.current.ballPrevVelZ) / dt;
+
+        // 保存前一帧的速度
+        sim.current.ballPrevVelX = sim.current.ballVelX;
+        sim.current.ballPrevVelZ = sim.current.ballVelZ;
 
         // 更新小球位置
         sim.current.target.position.x = newX;
@@ -1068,7 +1136,16 @@ export default function App() {
             const loadedModels = Object.keys(models)
                 .filter(key => key.startsWith('indexeddb://'))
                 .map(key => ({ name: key.replace('indexeddb://', '') }));
-            
+
+            // 检查是否有旧模型（12维状态）
+            const oldModels = loadedModels.filter(m =>
+                m.name.includes('v1') || m.name.includes('v2') || m.name.includes('v3')
+            );
+
+            if (oldModels.length > 0) {
+                addLog('⚠️ 检测到旧版本模型（12维状态）。由于状态维度已升级到16维，这些模型不兼容。请重新训练新模型。', 'warning');
+            }
+
             setTrainedModels([
                 { name: '跟随网球示例' },
                 { name: '自动避障示例' },
@@ -1077,7 +1154,7 @@ export default function App() {
         } catch (err) {
             console.error('Failed to load models from IndexedDB', err);
         }
-    }, []);
+    }, [addLog]);
 
     const handleExportModels = async () => {
         const modelsToExport = trainedModels.filter(m => !m.name.endsWith('示例'));
@@ -1688,15 +1765,58 @@ export default function App() {
         const dz = target.position.z - robotState.z;
         const targetDist = Math.sqrt(dx * dx + dz * dz);
 
+        // 计算摄像头位置
+        const dirX = Math.sin(robotState.rotation);
+        const dirZ = Math.cos(robotState.rotation);
+        const camX = robotState.x + dirX * 0.85;
+        const camZ = robotState.z + dirZ * 0.85;
+
+        // 计算相对位置
+        const relDx = target.position.x - camX;
+        const relDz = target.position.z - camZ;
+
         // Calculate relative angle to target
-        const angleToTarget = Math.atan2(dx, dz);
+        const angleToTarget = Math.atan2(relDx, relDz);
         let relativeAngle = angleToTarget - robotState.rotation;
         // Normalize angle to [-PI, PI]
         while (relativeAngle > Math.PI) relativeAngle -= Math.PI * 2;
         while (relativeAngle < -Math.PI) relativeAngle += Math.PI * 2;
 
-        // Build 12-dimensional state (matching recordFrame structure)
-        const state = new Array(12).fill(0);
+        // 计算可见性
+        const FOV = Math.PI / 4;
+        const isVisible = Math.abs(relativeAngle) <= FOV;
+
+        // 计算是否被遮挡
+        let isBlocked = false;
+        if (isVisible && targetDist > 1.0) {
+            const steps = Math.floor(targetDist / 0.5);
+            const stepX = relDx / steps;
+            const stepZ = relDz / steps;
+            let px = camX;
+            let pz = camZ;
+
+            for (let i = 1; i < steps; i++) {
+                px += stepX;
+                pz += stepZ;
+
+                for (const wall of sim.current.walls) {
+                    if (wall === target) continue;
+                    const w = wall.userData.w;
+                    const depth = wall.userData.d;
+                    const wx = wall.position.x;
+                    const wz = wall.position.z;
+
+                    if (px > wx - w/2 && px < wx + w/2 && pz > wz - depth/2 && pz < wz + depth/2) {
+                        isBlocked = true;
+                        break;
+                    }
+                }
+                if (isBlocked) break;
+            }
+        }
+
+        // Build 16-dimensional state (matching recordFrame structure)
+        const state = new Array(16).fill(0);
         state[0] = robotState.x;
         state[1] = robotState.z;
         state[2] = Math.sin(robotState.rotation);
@@ -1709,6 +1829,10 @@ export default function App() {
         state[9] = targetDist;
         state[10] = relativeAngle;
         state[11] = sim.current.isColliding ? 1.0 : 0.0;
+        state[12] = isVisible ? 1.0 : 0.0;                 // 可见性
+        state[13] = isBlocked ? 1.0 : 0.0;                 // 被遮挡
+        state[14] = sim.current.ballAccelX || 0;           // 小球加速度 x
+        state[15] = sim.current.ballAccelZ || 0;           // 小球加速度 z
 
         const prediction = actService.predict(model, image, state);
 
@@ -2089,34 +2213,6 @@ export default function App() {
                                     </label>
                                 </div>
 
-                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
-                                    <div className="font-semibold text-slate-300 mb-2">小球运动控制</div>
-                                    <label className="flex items-center gap-2">
-                                        <span className="w-16">运动模式:</span>
-                                        <select value={ballMotionMode} onChange={(e) => setBallMotionMode(e.target.value as any)} className="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 appearance-none">
-                                            <option value="fixed">固定航迹</option>
-                                            <option value="random">随机运动</option>
-                                            <option value="mixed">混合运动</option>
-                                        </select>
-                               </label>
-                                    <label className="flex items-center gap-2">
-                                        <span className="w-16">半径:</span>
-                                        <input type="range" min="1" max="10" step="0.5" value={ballRadius} onChange={(e) => setBallRadius(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
-                                        <span className="w-8 text-right">{ballRadius.toFixed(1)}</span>
-                                    </label>
-                                    <label className="flex items-center gap-2">
-                                        <span className="w-16">速度:</span>
-                                        <input type="range" min="0.1" max="3" step="0.1" value={ballSpeed} onChange={(e) => setBallSpeed(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
-                                        <span className="w-8 text-right">{ballSpeed.toFixed(1)}</span>
-                                    </label>
-                                    {(ballMotionMode === 'random' || ballMotionMode === 'mixed') && (
-                                        <label className="flex items-center gap-2">
-                                            <span className="w-16">随机强度:</span>
-                                            <input type="range" min="0" max="2" step="0.1" value={ballRandomIntensity} onChange={(e) => setBallRandomIntensity(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
-                                            <span className="w-8 text-right">{ballRandomIntensity.toFixed(1)}</span>
-                                        </label>
-                                    )}
-                                </div>
                                 <div className="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
                                     {hasArm ? (
                                         <button
@@ -2188,6 +2284,60 @@ export default function App() {
                                         <span className="text-lg leading-none">→</span>
                                         <span className="text-[10px]">D</span>
                                     </button>
+                                </div>
+                                <p className="text-[10px] text-slate-500 text-center">使用键盘 WASD 或方向键控制</p>
+
+                                <div className="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                                    <div className="font-semibold text-slate-300 mb-2">🎾 小球运动控制</div>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">运动模式:</span>
+                                        <select value={ballMotionMode} onChange={(e) => setBallMotionMode(e.target.value as any)} className="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                                            <option value="fixed">固定航迹</option>
+                                            <option value="random">随机运动</option>
+                                            <option value="mixed">混合运动</option>
+                                            <option value="manual">手动控制</option>
+                                        </select>
+                               </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">半径:</span>
+                                        <input
+                                            type="range"
+                                            min="1"
+                                            max="10"
+                                            step="0.5"
+                                            value={ballRadius}
+                                            onChange={(e) => setBallRadius(Number(e.target.value))}
+                                            disabled={ballMotionMode === 'manual'}
+                                            className={`flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500 ${ballMotionMode === 'manual' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        />
+                                        <span className="w-8 text-right">{ballRadius.toFixed(1)}</span>
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                        <span className="w-16">速度:</span>
+                                        <input
+                                            type="range"
+                                            min="0.1"
+                                            max="3"
+                                            step="0.1"
+                                            value={ballSpeed}
+                                            onChange={(e) => setBallSpeed(Number(e.target.value))}
+                                            disabled={ballMotionMode === 'manual'}
+                                            className={`flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500 ${ballMotionMode === 'manual' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        />
+                                        <span className="w-8 text-right">{ballSpeed.toFixed(1)}</span>
+                                    </label>
+                                    {(ballMotionMode === 'random' || ballMotionMode === 'mixed') && (
+                                        <label className="flex items-center gap-2">
+                                            <span className="w-16">随机强度:</span>
+                                            <input type="range" min="0" max="2" step="0.1" value={ballRandomIntensity} onChange={(e) => setBallRandomIntensity(Number(e.target.value))} className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500" />
+                                            <span className="w-8 text-right">{ballRandomIntensity.toFixed(1)}</span>
+                                        </label>
+                                    )}
+                                    {ballMotionMode === 'manual' && (
+                                        <div className="text-[10px] text-slate-500 italic mt-2 p-2 bg-slate-800/50 rounded border border-slate-700">
+                                            💡 手动模式：用鼠标拖动小球，可以自由创建训练数据
+                                        </div>
+                                    )}
                                 </div>
                                 <p className="text-[10px] text-slate-500 text-center mt-2">使用键盘 WASD 或方向键控制</p>
                             </div>
