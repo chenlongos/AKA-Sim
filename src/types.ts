@@ -13,6 +13,14 @@ export type RobotConfig = string[];
 export type SceneType = 'basic' | 'living_room' | 'classroom' | 'tennis_court';
 export type SceneSize = 'small' | 'medium' | 'large';
 export type SceneComplexity = 'low' | 'medium' | 'high';
+export type BallMotionMode = 'fixed' | 'random' | 'mixed' | 'manual';
+
+export interface BallMotionConfig {
+  mode: BallMotionMode;
+  radius: number;
+  speed: number;
+  randomIntensity: number;
+}
 
 export interface LogEntry {
     message: string;
