@@ -1550,23 +1550,23 @@ export default function App() {
                     targetSpeed = 0;
                     targetTurn = 0;
                 } else if (!isVisible) {
-                    // Ball out of FOV or blocked: rotate in place to search
+                    // Ball out of FOV or blocked: rotate toward the ball's actual direction
                     targetSpeed = 0;
-                    targetTurn = turnSpeed;
+                    // angleDiff 已经包含了方向信息：正=球在左边，负=球在右边
+                    targetTurn = angleDiff > 0 ? turnSpeed : -turnSpeed;
                 } else {
                     // Ball in FOV: track and approach
-                    // Use a smaller multiplier for smoother turning
-                    targetTurn = angleDiff * 1.0;
-                    
+                    targetTurn = angleDiff * 1.5;
+
                     // Cap the turn speed to prevent violent swings
-                    targetTurn = Math.max(-turnSpeed * 1.5, Math.min(turnSpeed * 1.5, targetTurn));
-                    
-                    // Smooth speed approach
-                    targetSpeed = Math.min(speed, (distance - 1.5) * 0.5);
-                    
+                    targetTurn = Math.max(-turnSpeed * 2.0, Math.min(turnSpeed * 2.0, targetTurn));
+
+                    // Faster speed approach with smooth deceleration near target
+                    targetSpeed = Math.min(speed * 2.0, (distance - 1.0) * 0.8);
+
                     // If the angle is too large, slow down to turn
                     if (Math.abs(angleDiff) > Math.PI / 6) {
-                        targetSpeed *= 0.5;
+                        targetSpeed *= 0.3;
                     }
                 }
             } else if (selectedModel === '自动避障示例') {
@@ -1759,15 +1759,31 @@ export default function App() {
             return keysChanged ? newActiveKeys : prev;
         });
 
-        // Check goal
-        if (actualDist < 1.0) {
-            addLog('Target reached!', 'success');
-            target.position.set(
-                (Math.random() - 0.5) * 12,
-                0.4,
-                (Math.random() - 0.5) * 12
-            );
+        // Check goal: stop-at-target + auto arm grab
+        if (actualDist < 1.5) {
+            // 接近目标：开始减速
+            robotState.velocity = 0;
+            robotState.angularVelocity = 0;
             sim.current.actionBuffer = [];
+
+            if (actualDist < 1.0) {
+                // 到达目标：完全停车，停止推理
+                addLog('🎯 Target reached! Car stopped.', 'success');
+                sim.current.isInferencing = false;
+                setIsInferencing(false);
+
+                // 如果有机械臂且处于空闲状态，自动触发抓取
+                const hasArm = sim.current.arm && sim.current.arm.state === 'idle';
+                if (hasArm) {
+                    addLog('🦾 Auto-triggering arm grab...', 'info');
+                    sim.current.keys['q'] = true;
+                }
+                return;
+            }
+
+            // 在 1.0-1.5 范围内：已停车，等待更精确的位置调整
+            sim.current.inferenceTimeoutId = setTimeout(runInference, 100);
+            return;
         }
 
         // Match training frequency (10Hz = 100ms)
