@@ -43,7 +43,110 @@ AKA-Sim/
 
 ## 快速开始
 
-### 1. 环境配置
+### 方式一：Docker（推荐）
+
+项目提供了多阶段 Docker 镜像，包含开发环境和生产环境两种构建目标。远程镜像已发布，可直接拉取使用，无需本地构建。
+
+#### 环境要求
+
+- Docker 20.10+
+- Docker Compose 2.0+（可选）
+
+#### 1. 拉取预构建镜像（推荐）
+
+跳过构建，直接拉取已有镜像：
+
+```bash
+docker pull docker.cnb.cool/tmacychen/chenlongos-aka-sim:latest
+docker tag docker.cnb.cool/tmacychen/chenlongos-aka-sim:latest aka-sim:dev
+```
+
+#### 2. 启动容器
+
+```bash
+# 启动开发容器（挂载本地源码）
+docker run -d --name aka-sim-dev \
+  -p 80:80 -p 5000:5000 \
+  -v $(pwd):/app \
+  -v /app/frontend/node_modules \
+  -e PYTHONPATH=/app/backend \
+  -w /app \
+  aka-sim:dev
+
+# 首次启动需要构建前端静态资源
+docker exec aka-sim-dev bash -c "cd /app/frontend && npm run build"
+```
+
+访问 http://localhost:80 即可使用。
+
+#### 3. 本地构建镜像
+
+如需自定义构建，可使用以下命令：
+
+```bash
+# 构建开发镜像
+docker build --target dev -t aka-sim:dev .
+
+# 构建生产镜像
+docker build --target prod -t aka-sim:prod .
+
+# 启动开发容器（挂载本地源码，支持热重载）
+docker run -d --name aka-sim-dev \
+  -p 80:80 -p 5000:5000 \
+  -v $(pwd):/app \
+  -v /app/frontend/node_modules \
+  -e PYTHONPATH=/app/backend \
+  -w /app \
+  aka-sim:dev
+
+# 首次启动需要构建前端静态资源
+docker exec aka-sim-dev bash -c "cd /app/frontend && npm run build"
+
+# 启动生产容器
+docker run -d --name aka-sim-prod \
+  -p 80:80 -p 443:443 \
+  -e PYTHONPATH=/app/backend \
+  aka-sim:prod
+```
+
+#### 使用 Docker Compose
+
+```bash
+# 开发环境（源码挂载，支持热重载）
+docker compose up dev
+
+# 生产环境（构建前端，仅运行时依赖）
+docker compose up prod --build
+```
+
+#### 端口说明
+
+| 端口 | 用途 | 说明 |
+|------|------|------|
+| 80 | Flask HTTP | 主服务端口 |
+| 443 | Flask HTTPS | 生产环境，自动生成自签名证书 |
+| 5000 | Flask HTTP 备用 | Windows 环境下的默认端口 |
+| 5173 | Vite 开发服务器 | 仅开发环境 |
+
+#### Dockerfile 构建阶段
+
+| 阶段 | 说明 | 基础镜像 |
+|------|------|----------|
+| `base` | 安装 Python 3.11、Node.js 20 及所有依赖 | python:3.11-slim |
+| `dev` | 开发环境，额外安装 debugpy/watchdog/flake8/black | base |
+| `prod` | 生产环境，自动构建 React 前端并复制到 static/ | base |
+
+#### GPU 支持（可选）
+
+如需 CUDA 加速，将 Dockerfile 基础镜像替换为：
+```dockerfile
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04 AS base
+```
+并安装对应版本的 PyTorch，运行时添加 `--gpus all` 参数。
+
+### 方式二：本地安装
+
+#### 1. 环境配置
 
 创建 Python 3.11 环境：
 
@@ -52,21 +155,27 @@ conda create -n aka-sim python=3.11 -y
 conda activate aka-sim
 ```
 
-### 2. 安装依赖
+#### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 启动后端服务
+#### 3. 构建前端（React）
 
 ```bash
-python run.py
+cd frontend && npm ci && npm run build && cd ..
 ```
 
-后端启动后，将main.html拖到浏览器中打开前端页面：
+#### 4. 启动后端服务
 
-服务启动后访问：
+```bash
+PYTHONPATH=backend python run.py
+```
+
+#### 5. 访问服务
+
+- http://localhost/ - 首页
 - http://localhost/sim - 模拟器
 
 ## API 接口
