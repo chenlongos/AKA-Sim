@@ -13,7 +13,7 @@ export default defineConfig({
             },
             "/socket.io": {
                 target: "http://localhost:5000",
-                ws: false,
+                ws: true,
                 changeOrigin: true,
             },
         },
