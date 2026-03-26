@@ -835,6 +835,15 @@ export default function App() {
         if (isAtTarget) {
             if (arm.state === 'picking_down') {
                 if (arm.grabbedObject) {
+                    // Remove from walls array when picked up
+                    const wallIndex = sim.current.walls.indexOf(arm.grabbedObject);
+                    if (wallIndex > -1) {
+                        sim.current.walls.splice(wallIndex, 1);
+                    }
+                    // Check if this is the target and set target to null
+                    if (arm.grabbedObject === sim.current.target) {
+                        sim.current.target = null;
+                    }
                     arm.gripper.add(arm.grabbedObject);
                     arm.grabbedObject.position.set(0, 0.35, 0);
                 }
@@ -851,6 +860,10 @@ export default function App() {
                     arm.grabbedObject.position.copy(worldPos);
                     // Drop to ground level
                     arm.grabbedObject.position.y = 0.25;
+                    // Add back to walls array when dropped
+                    sim.current.walls.push(arm.grabbedObject);
+                    // Set as target when dropped
+                    sim.current.target = arm.grabbedObject;
                     arm.grabbedObject = null;
                 }
                 arm.state = 'dropping_up';
