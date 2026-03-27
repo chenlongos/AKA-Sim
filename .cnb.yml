@@ -1,0 +1,9 @@
+$:
+  vscode:
+    - runner:
+        cpus: 8
+      docker:
+        image: docker.cnb.cool/nuc-elite/my-dev-makes:rcore-tutorial-last
+      services:
+        - vscode
+        - docker

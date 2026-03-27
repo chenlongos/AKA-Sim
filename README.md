@@ -1,6 +1,9 @@
 # LeRobot ACT Simulator - 具身智能教学仿真平台
 
-## 📖 项目简介
+
+=======
+AKA-Sim 是一个用于模拟环境训练和 ACT (Action Chunking Transformer) 策略学习的平台。
+>>>>>>> origin/main
 
 **LeRobot ACT Simulator** 是一个基于 Web 的轻量级具身智能（Embodied AI）教学仿真平台。它旨在通过可视化的方式，演示机器人如何通过**模仿学习（Imitation Learning）**掌握运动控制技能。
 
