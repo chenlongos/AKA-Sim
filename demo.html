@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LeRobot ACT 模型教学模拟器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            overflow-x: hidden;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass-panel {
+            background: rgba(20, 20, 30, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 100, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        .neon-border {
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.1);
+        }
+        .camera-feed {
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        .camera-feed::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 48%, rgba(56, 189, 248, 0.03) 50%, transparent 52%);
+            background-size: 4px 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .recording-pulse {
+            animation: pulse-red 1.5s infinite;
+        }
+        @keyframes pulse-red {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .training-bar {
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%);
+            transition: width 0.3s ease;
+        }
+        .attention-heatmap {
+            background: radial-gradient(circle at center, rgba(239, 68, 68, 0.6) 0%, transparent 70%);
+            mix-blend-mode: overlay;
+        }
+        .grid-bg {
+            background-image: 
+                linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        .control-btn {
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+        .control-btn::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.3s, height 0.3s;
+        }
+        .control-btn:active::after {
+            width: 200px;
+            height: 200px;
+        }
+        .log-entry {
+            border-left: 2px solid transparent;
+            padding-left: 8px;
+            margin: 2px 0;
+            font-size: 0.85rem;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        .log-info { border-left-color: #3b82f6; color: #93c5fd; }
+        .log-success { border-left-color: #10b981; color: #6ee7b7; }
+        .log-warning { border-left-color: #f59e0b; color: #fcd34d; }
+        .log-error { border-left-color: #ef4444; color: #fca5a5; }
+    </style>
+</head>
+<body class="h-screen flex flex-col grid-bg">
+
+    <!-- Header -->
+    <header class="glass-panel border-b border-slate-800 px-6 py-4 flex justify-between items-center z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">🤖</div>
+            <div>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">LeRobot ACT Simulator</h1>
+                <p class="text-xs text-slate-400 mono">Action Chunking with Transformers - Educational Edition</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 text-sm">
+            <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span class="text-slate-300">Simulation Active</span>
+            </div>
+            <div class="mono text-xs text-slate-500" id="fps-counter">60 FPS</div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Left Panel: Controls -->
+        <aside class="w-80 glass-panel border-r border-slate-800 flex flex-col overflow-y-auto">
+            <div class="p-4 space-y-6">
+                
+                <!-- Environment Settings -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">场景设置</h3>
+                    <div class="space-y-2">
+                        <select id="scene-type" class="w-full bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none" onchange="updateScene()">
+                            <option value="basic">基础场景 (Basic)</option>
+                            <option value="living_room">客厅场景 (Living Room)</option>
+                            <option value="classroom">教室场景 (Classroom)</option>
+                            <option value="tennis_court">网球场 (Tennis Court)</option>
+                        </select>
+                        <div class="flex gap-2">
+                            <select id="scene-size" class="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none" onchange="updateScene()">
+                                <option value="small">小尺寸</option>
+                                <option value="medium" selected>中尺寸</option>
+                                <option value="large">大尺寸</option>
+                            </select>
+                            <select id="scene-complexity" class="flex-1 bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none" onchange="updateScene()">
+                                <option value="low">低复杂度</option>
+                                <option value="medium" selected>中复杂度</option>
+                                <option value="high">高复杂度</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Light Settings -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">光源设置</h3>
+                    <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">X:</span> <input type="range" id="light-x" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateLight()" />
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">Y:</span> <input type="range" id="light-y" min="5" max="40" value="20" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateLight()" />
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-4">Z:</span> <input type="range" id="light-z" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateLight()" />
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Control Instructions -->
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">小车控制</h3>
+                        <button onclick="resetRobot()" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-2 py-1 rounded transition-all" title="复位小车位置">
+                            ↺ 复位
+                        </button>
+                    </div>
+                    <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">速度:</span>
+                            <input type="range" id="speed-val" min="0.05" max="0.5" step="0.01" value="0.1" oninput="updateSpeed()" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                            <span class="w-8 text-right" id="speed-display">0.10</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">转向:</span>
+                            <input type="range" id="turn-speed-val" min="0.01" max="0.2" step="0.01" value="0.05" oninput="updateTurnSpeed()" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                            <span class="w-8 text-right" id="turn-speed-display">0.05</span>
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
+                        <div></div>
+                        <button class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1" onclick="sendCommand('forward')">
+                            <span class="text-lg leading-none">↑</span>
+                            <span class="text-[10px]">W</span>
+                        </button>
+                        <div></div>
+                        <button class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1" onclick="sendCommand('left')">
+                            <span class="text-lg leading-none">←</span>
+                            <span class="text-[10px]">A</span>
+                        </button>
+                        <button class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1" onclick="sendCommand('backward')">
+                            <span class="text-lg leading-none">↓</span>
+                            <span class="text-[10px]">S</span>
+                        </button>
+                        <button class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1" onclick="sendCommand('right')">
+                            <span class="text-lg leading-none">→</span>
+                            <span class="text-[10px]">D</span>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-slate-500 text-center">使用键盘 WASD 或方向键控制</p>
+                </div>
+
+                <!-- Data Collection -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-red-500" id="rec-indicator" style="opacity: 0.3"></span>
+                        数据采集
+                    </h3>
+                    <div class="flex gap-2">
+                        <button id="btn-record" onclick="toggleRecording()" class="flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                            开始采集
+                        </button>
+                    </div>
+                    <div class="text-xs text-slate-400 mono bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <div>Episodes: <span id="episode-count" class="text-blue-400">0</span></div>
+                        <div>Frames: <span id="frame-count" class="text-blue-400">0</span></div>
+                        <div>Actions: <span id="action-count" class="text-blue-400">0</span></div>
+                    </div>
+                    <button onclick="saveDataset()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 py-2 rounded-lg text-sm transition-all disabled:opacity-50" id="btn-save" disabled>
+                        保存数据集 (JSON)
+                    </button>
+                </div>
+
+                <!-- Training -->
+                <div class="space-y-3">
+                    <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">ACT 模型训练</h3>
+                    <button onclick="startTraining()" id="btn-train" class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50" disabled>
+                        开始训练模型
+                    </button>
+                    <div id="training-progress" class="hidden space-y-2">
+                        <div class="flex justify-between text-xs text-slate-400">
+                            <span>Training...</span>
+                            <span id="train-percent">0%</span>
+                        </div>
+                        <div class="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                            <div id="train-bar" class="h-full training-bar w-0"></div>
+                        </div>
+                        <div class="text-xs text-slate-500 mono" id="train-status">Initializing...</div>
+                    </div>
+                </div>
+
+                <!-- Inference -->
+                <div class="space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">模型推理</h3>
+                    <select id="model-select" class="w-full bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 appearance-none">
+                        <option value="">选择训练好的模型...</option>
+                        <option value="act_model_v1" disabled>ACT_Model_v1 (请先训练)</option>
+                    </select>
+                    <button onclick="startInference()" id="btn-infer" class="w-full bg-green-600/20 hover:bg-green-600/30 text-green-400 border border-green-500/30 py-2 rounded-lg font-medium transition-all disabled:opacity-50" disabled>
+                        启动自主推理
+                    </button>
+                    <div class="flex items-center gap-2 text-xs text-slate-500">
+                        <input type="checkbox" id="show-attention" class="rounded bg-slate-800 border-slate-600" onchange="toggleAttention()">
+                        <label for="show-attention">显示注意力热力图</label>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center: 3D View -->
+        <main class="flex-1 relative bg-slate-950">
+            <div id="canvas-container" class="absolute inset-0"></div>
+            
+            <!-- Overlay Info -->
+            <div class="absolute top-4 left-4 glass-panel rounded-lg p-3 text-xs mono space-y-1 pointer-events-none">
+                <div class="text-slate-400">Position: <span id="pos-x" class="text-blue-400">0.00</span>, <span id="pos-z" class="text-blue-400">0.00</span></div>
+                <div class="text-slate-400">Rotation: <span id="rot-y" class="text-purple-400">0°</span></div>
+                <div class="text-slate-400">Velocity: <span id="velocity" class="text-green-400">0.0</span> m/s</div>
+            </div>
+
+            <!-- Status Badge -->
+            <div id="status-badge" class="absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700">
+                手动控制模式
+            </div>
+        </main>
+
+        <!-- Right Panel: Camera & Logs -->
+        <aside class="w-96 glass-panel border-l border-slate-800 flex flex-col">
+            
+            <!-- Camera View -->
+            <div class="h-48 camera-feed border-b border-slate-800 relative">
+                <canvas id="camera-canvas" class="w-full h-full object-cover"></canvas>
+                <div class="absolute top-2 left-2 text-xs mono text-green-400 bg-black/50 px-2 py-1 rounded">CAM_01 (Onboard)</div>
+                <div class="absolute bottom-2 right-2 text-xs text-slate-500" id="cam-fps">30 FPS</div>
+                
+                <!-- Attention Overlay -->
+                <div id="attention-overlay" class="absolute inset-0 attention-heatmap opacity-0 pointer-events-none transition-opacity duration-300"></div>
+            </div>
+
+            <!-- Action Chunk Visualization (ACT Feature) -->
+            <div class="h-32 border-b border-slate-800 p-3 bg-slate-900/30">
+                <h4 class="text-xs font-semibold text-slate-400 mb-2 uppercase">Action Chunking (ACT)</h4>
+                <div class="flex items-end gap-1 h-16" id="action-chunk-viz">
+                    <!-- Dynamic bars will be inserted here -->
+                    <div class="flex-1 bg-slate-800 rounded-t text-center text-[10px] text-slate-600 pt-2">Waiting...</div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-600 mt-1 mono">
+                    <span>t+0</span>
+                    <span>t+4</span>
+                    <span>t+8</span>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="flex-1 flex flex-col min-h-0">
+                <div class="p-3 border-b border-slate-800 flex justify-between items-center">
+                    <h4 class="text-xs font-semibold text-slate-400 uppercase">System Logs</h4>
+                    <button onclick="clearLogs()" class="text-[10px] text-slate-600 hover:text-slate-400">Clear</button>
+                </div>
+                <div id="log-container" class="flex-1 overflow-y-auto p-3 space-y-1 text-xs mono">
+                    <div class="log-entry log-info">System initialized. Waiting for commands...</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // Global State
+        let scene, camera, renderer, robot, target, walls = [], environmentGroup, plane, dirLight;
+        let robotState = {
+            x: 0,
+            z: 0,
+            rotation: 0,
+            velocity: 0,
+            angularVelocity: 0
+        };
+        let isRecording = false;
+        let isTraining = false;
+        let isInferencing = false;
+        let dataset = [];
+        let currentEpisode = [];
+        let episodes = [];
+        let trainedModel = null;
+        let inferenceTimeoutId = null;
+        let speed = 0.1;
+        let turnSpeed = 0.05;
+        
+        // Three.js Setup
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a24);
+            scene.fog = new THREE.Fog(0x1a1a24, 10, 50);
+            
+            // Camera (Third-person)
+            camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 12, 12);
+            camera.lookAt(0, 0, 0);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+            
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            
+            dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            dirLight.position.set(10, 20, 10);
+            dirLight.castShadow = true;
+            dirLight.shadow.camera.left = -20;
+            dirLight.shadow.camera.right = 20;
+            dirLight.shadow.camera.top = 20;
+            dirLight.shadow.camera.bottom = -20;
+            scene.add(dirLight);
+            
+            // Floor with Grid
+            const gridHelper = new THREE.GridHelper(60, 60, 0x1e293b, 0x0f172a);
+            scene.add(gridHelper);
+            
+            const planeGeometry = new THREE.PlaneGeometry(60, 60);
+            const planeMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x1e293b, 
+                roughness: 0.8,
+                metalness: 0.2
+            });
+            plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            plane.position.y = -0.01;
+            plane.receiveShadow = true;
+            scene.add(plane);
+            
+            // Environment Group
+            environmentGroup = new THREE.Group();
+            scene.add(environmentGroup);
+            
+            // Robot (Differential Drive)
+            robot = new THREE.Group();
+            
+            // Body
+            const bodyGeo = new THREE.BoxGeometry(1.2, 0.5, 1.8);
+            const bodyMat = new THREE.MeshStandardMaterial({ 
+                color: 0x3b82f6,
+                metalness: 0.6,
+                roughness: 0.4
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0.5;
+            body.castShadow = true;
+            robot.add(body);
+            
+            // Camera mount
+            const camMountGeo = new THREE.BoxGeometry(0.4, 0.3, 0.4);
+            const camMountMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+            const camMount = new THREE.Mesh(camMountGeo, camMountMat);
+            camMount.position.set(0, 0.9, 0.6);
+            robot.add(camMount);
+            
+            // Lens
+            const lensGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.2, 16);
+            const lensMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+            const lens = new THREE.Mesh(lensGeo, lensMat);
+            lens.rotation.x = Math.PI / 2;
+            lens.position.set(0, 0.9, 0.85);
+            robot.add(lens);
+            
+            // Wheels
+            const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 16);
+            const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+            
+            const leftWheel = new THREE.Mesh(wheelGeo, wheelMat);
+            leftWheel.rotation.z = Math.PI / 2;
+            leftWheel.position.set(-0.7, 0.3, 0);
+            leftWheel.castShadow = true;
+            robot.add(leftWheel);
+            
+            const rightWheel = new THREE.Mesh(wheelGeo, wheelMat);
+            rightWheel.rotation.z = Math.PI / 2;
+            rightWheel.position.set(0.7, 0.3, 0);
+            rightWheel.castShadow = true;
+            robot.add(rightWheel);
+            
+            // Direction indicator
+            const arrowGeo = new THREE.ConeGeometry(0.2, 0.5, 4);
+            const arrowMat = new THREE.MeshStandardMaterial({ color: 0x10b981 });
+            const arrow = new THREE.Mesh(arrowGeo, arrowMat);
+            arrow.rotation.x = Math.PI / 2;
+            arrow.position.set(0, 0.5, 1.2);
+            robot.add(arrow);
+            
+            scene.add(robot);
+            
+            // Onboard Camera (for rendering)
+            setupOnboardCamera();
+            
+            // Build initial scene
+            updateScene();
+            
+            // Handle resize
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // Keyboard controls
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+            
+            animate();
+        }
+        
+        let onboardCamera, onboardRenderTarget;
+        function setupOnboardCamera() {
+            onboardCamera = new THREE.PerspectiveCamera(60, 4/3, 0.1, 100);
+            onboardRenderTarget = new THREE.WebGLRenderTarget(320, 240, {
+                format: THREE.RGBAFormat,
+                type: THREE.UnsignedByteType
+            });
+        }
+        
+        function updateOnboardCamera() {
+            if (!onboardCamera || !onboardRenderTarget || !renderer || !scene) return;
+            
+            // Calculate forward direction vector based on robot rotation
+            const dirX = Math.sin(robotState.rotation);
+            const dirZ = Math.cos(robotState.rotation);
+            
+            // Position camera at the very front of the robot
+            onboardCamera.position.set(
+                robotState.x + dirX * 1.2,
+                0.9,
+                robotState.z + dirZ * 1.2
+            );
+            
+            // Make the camera look exactly forward
+            onboardCamera.lookAt(
+                robotState.x + dirX * 10.0,
+                0.7, // Look slightly down towards the ground
+                robotState.z + dirZ * 10.0
+            );
+            
+            // Render to texture
+            renderer.setRenderTarget(onboardRenderTarget);
+            renderer.clear();
+            renderer.render(scene, onboardCamera);
+            renderer.setRenderTarget(null);
+            
+            // Copy to canvas
+            const canvas = document.getElementById('camera-canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            canvas.width = 320;
+            canvas.height = 240;
+            
+            const pixels = new Uint8Array(320 * 240 * 4);
+            renderer.readRenderTargetPixels(onboardRenderTarget, 0, 0, 320, 240, pixels);
+            
+            const imageData = ctx.createImageData(320, 240);
+            
+            // WebGL reads pixels from bottom-to-top, Canvas expects top-to-bottom
+            // We need to flip the image vertically
+            for (let y = 0; y < 240; y++) {
+                for (let x = 0; x < 320; x++) {
+                    const srcIdx = ((239 - y) * 320 + x) * 4;
+                    const dstIdx = (y * 320 + x) * 4;
+                    
+                    imageData.data[dstIdx] = pixels[srcIdx];         // R
+                    imageData.data[dstIdx + 1] = pixels[srcIdx + 1]; // G
+                    imageData.data[dstIdx + 2] = pixels[srcIdx + 2]; // B
+                    imageData.data[dstIdx + 3] = 255;                // A (force opaque)
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Procedural Textures
+        function createTexture(type) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            if (type === 'wood') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(0, 0, 512, 512);
+                for(let i=0; i<200; i++) {
+                    ctx.fillStyle = `rgba(60, 30, 10, ${Math.random()*0.15})`;
+                    ctx.fillRect(0, Math.random()*512, 512, Math.random()*10);
+                }
+            } else if (type === 'tile') {
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 4;
+                for(let i=0; i<=512; i+=64) {
+                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+                }
+            } else if (type === 'tennis') {
+                ctx.fillStyle = '#1e5631';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(64, 32, 384, 448);
+                ctx.beginPath(); ctx.moveTo(100, 32); ctx.lineTo(100, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(412, 32); ctx.lineTo(412, 480); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 128); ctx.lineTo(412, 128); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(100, 384); ctx.lineTo(412, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 128); ctx.lineTo(256, 384); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 32); ctx.lineTo(256, 40); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(256, 480); ctx.lineTo(256, 472); ctx.stroke();
+                ctx.lineWidth = 6;
+                ctx.beginPath(); ctx.moveTo(64, 256); ctx.lineTo(448, 256); ctx.stroke();
+            } else if (type === 'wall') {
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, 0, 512, 512);
+                for(let i=0; i<500; i++) {
+                    ctx.fillStyle = `rgba(0,0,0,${Math.random()*0.03})`;
+                    ctx.beginPath();
+                    ctx.arc(Math.random()*512, Math.random()*512, Math.random()*2, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            
+            // Get current scene size for texture repetition
+            const sceneSize = document.getElementById('scene-size')?.value || 'medium';
+            let sizeVal = 20;
+            if (sceneSize === 'small') sizeVal = 10;
+            if (sceneSize === 'large') sizeVal = 30;
+
+            if (type !== 'tennis') tex.repeat.set(sizeVal/5, sizeVal/5);
+            return tex;
+        }
+
+        function updateScene() {
+            if (!environmentGroup || !plane) return;
+            
+            const sceneType = document.getElementById('scene-type').value;
+            const sceneSize = document.getElementById('scene-size').value;
+            const sceneComplexity = document.getElementById('scene-complexity').value;
+            
+            // Clear existing
+            while(environmentGroup.children.length > 0){ 
+                environmentGroup.remove(environmentGroup.children[0]); 
+            }
+            walls = [];
+            
+            let sizeVal = 20;
+            if (sceneSize === 'small') sizeVal = 10;
+            if (sceneSize === 'large') sizeVal = 30;
+            
+            const halfSize = sizeVal / 2;
+            
+            const woodTex = createTexture('wood');
+            const tileTex = createTexture('tile');
+            const tennisTex = createTexture('tennis');
+            const wallTex = createTexture('wall');
+            
+            // Update floor
+            const planeMat = plane.material;
+            if (sceneType === 'living_room') {
+                planeMat.map = woodTex;
+                planeMat.color.setHex(0xffffff);
+            } else if (sceneType === 'classroom') {
+                planeMat.map = tileTex;
+                planeMat.color.setHex(0xffffff);
+            } else if (sceneType === 'tennis_court') {
+                planeMat.map = tennisTex;
+                planeMat.color.setHex(0xffffff);
+            } else {
+                planeMat.map = null;
+                planeMat.color.setHex(0x1e293b);
+            }
+            planeMat.needsUpdate = true;
+            
+            const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, color: 0xd1d5db, roughness: 0.9 });
+            
+            const addWall = (x, z, w, h, d, color, map) => {
+                const mat = color ? new THREE.MeshStandardMaterial({ color: color, map: map || null }) : wallMat;
+                const geo = new THREE.BoxGeometry(w, h, d);
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(x, h/2, z);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                mesh.userData = { w, d };
+                environmentGroup.add(mesh);
+                walls.push(mesh);
+            };
+            
+            // Boundary walls
+            if (sceneType !== 'tennis_court') {
+                addWall(0, -halfSize, sizeVal, 2, 0.5);
+                addWall(0, halfSize, sizeVal, 2, 0.5);
+                addWall(-halfSize, 0, 0.5, 2, sizeVal);
+                addWall(halfSize, 0, 0.5, 2, sizeVal);
+            } else {
+                addWall(0, -30, 60, 2, 0.5);
+                addWall(0, 30, 60, 2, 0.5);
+                addWall(-30, 0, 0.5, 2, 60);
+                addWall(30, 0, 0.5, 2, 60);
+            }
+            
+            let numObstacles = 2;
+            if (sceneComplexity === 'medium') numObstacles = 5;
+            if (sceneComplexity === 'high') numObstacles = 12;
+            
+            if (sceneType === 'basic') {
+                for(let i=0; i<numObstacles; i++) {
+                    const w = 1 + Math.random() * 2;
+                    const d = 1 + Math.random() * 2;
+                    const x = (Math.random() - 0.5) * (sizeVal - 4);
+                    const z = (Math.random() - 0.5) * (sizeVal - 4);
+                    if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                    addWall(x, z, w, 1.5, d, 0x64748b);
+                }
+            } else if (sceneType === 'living_room') {
+                addWall(0, -halfSize + 2, 4, 1, 1.5, 0x334155); // sofa base
+                addWall(0, -halfSize + 1.2, 4, 2, 0.5, 0x334155); // sofa back
+                addWall(0, halfSize - 1, 3, 0.8, 1, 0x8b5cf6); // TV stand
+                addWall(0, -halfSize + 4, 2, 0.5, 1.5, 0xffffff, woodTex); // Coffee table
+                
+                for(let i=0; i<numObstacles - 3; i++) {
+                    const w = 0.8 + Math.random() * 1;
+                    const d = 0.8 + Math.random() * 1;
+                    const x = (Math.random() - 0.5) * (sizeVal - 4);
+                    const z = (Math.random() - 0.5) * (sizeVal - 4);
+                    if (Math.abs(x) < 3 && Math.abs(z) < 3) continue;
+                    addWall(x, z, w, 1 + Math.random(), d, 0x475569);
+                }
+            } else if (sceneType === 'classroom') {
+                const rows = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+                const cols = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
+                for(let r=0; r<rows; r++) {
+                    for(let c=0; c<cols; c++) {
+                        const x = -halfSize/2 + 2 + c * 3;
+                        const z = -halfSize/2 + 2 + r * 3;
+                        if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+                        addWall(x, z, 1.5, 0.8, 1, 0xffffff, woodTex);
+                    }
+                }
+                addWall(0, halfSize - 2, 3, 1, 1.5, 0xffffff, woodTex); // Teacher desk
+            } else if (sceneType === 'tennis_court') {
+                // Net - passable
+                const netMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, wireframe: true });
+                const netGeo = new THREE.BoxGeometry(sizeVal - 1, 1, 0.5); // Increased depth
+                const net = new THREE.Mesh(netGeo, netMat);
+                net.position.set(0, 0.5, 0);
+                environmentGroup.add(net);
+            }
+            
+            // Target
+            const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
+            target = new THREE.Mesh(targetGeo, targetMat);
+            target.position.set(halfSize/2 - 1, 0.4, halfSize/2 - 1);
+            target.castShadow = true;
+            target.userData = { w: 0.8, d: 0.8 };
+            environmentGroup.add(target);
+            
+            // Tennis Ball
+            const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
+            const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
+            const ball = new THREE.Mesh(ballGeo, ballMat);
+            ball.position.set(-halfSize/2 + 1.5, 0.25, halfSize/2 - 1.5);
+            ball.castShadow = true;
+            ball.userData = { w: 0.5, d: 0.5 };
+            environmentGroup.add(ball);
+            walls.push(ball);
+
+            log(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
+        }
+
+        function updateLight() {
+            if (!dirLight) return;
+            const x = parseFloat(document.getElementById('light-x').value);
+            const y = parseFloat(document.getElementById('light-y').value);
+            const z = parseFloat(document.getElementById('light-z').value);
+            dirLight.position.set(x, y, z);
+        }
+        
+        const keys = {};
+        function handleKeyDown(e) {
+            keys[e.key.toLowerCase()] = true;
+            if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) {
+                e.preventDefault();
+                if(!isInferencing) sendCommand(getCommandFromKey(e.key));
+            }
+        }
+        
+        function handleKeyUp(e) {
+            keys[e.key.toLowerCase()] = false;
+        }
+        
+        function getCommandFromKey(key) {
+            const k = key.toLowerCase();
+            if(k === 'w' || k === 'arrowup') return 'forward';
+            if(k === 's' || k === 'arrowdown') return 'backward';
+            if(k === 'a' || k === 'arrowleft') return 'left';
+            if(k === 'd' || k === 'arrowright') return 'right';
+            return null;
+        }
+        
+        function updateSpeed() {
+            speed = parseFloat(document.getElementById('speed-val').value);
+            document.getElementById('speed-display').textContent = speed.toFixed(2);
+        }
+
+        function updateTurnSpeed() {
+            turnSpeed = parseFloat(document.getElementById('turn-speed-val').value);
+            document.getElementById('turn-speed-display').textContent = turnSpeed.toFixed(2);
+        }
+
+        function sendCommand(cmd) {
+            if(isTraining) return;
+            
+            let action = 0; // 0: stop, 1: forward, 2: backward, 3: left, 4: right
+            
+            switch(cmd) {
+                case 'forward':
+                    robotState.velocity = speed;
+                    action = 1;
+                    break;
+                case 'backward':
+                    robotState.velocity = -speed;
+                    action = 2;
+                    break;
+                case 'left':
+                    robotState.angularVelocity = turnSpeed;
+                    action = 3;
+                    break;
+                case 'right':
+                    robotState.angularVelocity = -turnSpeed;
+                    action = 4;
+                    break;
+            }
+            
+            // Record data if recording
+            if(isRecording) {
+                recordFrame(action);
+            }
+            
+            // Update action chunk visualization
+            updateActionChunk(action);
+            
+            log(`Command: ${cmd.toUpperCase()} (Action ID: ${action})`, 'info');
+        }
+        
+        function recordFrame(action) {
+            const frame = {
+                timestamp: Date.now(),
+                observation: {
+                    robot_pos: [robotState.x, robotState.z],
+                    robot_rot: robotState.rotation,
+                    target_pos: target ? [target.position.x, target.position.z] : [0,0],
+                    camera_image: null // In real implementation, this would be base64 encoded image
+                },
+                action: action,
+                action_chunk: generateActionChunk(action) // ACT predicts future actions
+            };
+            currentEpisode.push(frame);
+            document.getElementById('frame-count').textContent = currentEpisode.length;
+            document.getElementById('action-count').textContent = currentEpisode.length;
+        }
+        
+        function generateActionChunk(currentAction) {
+            // Simulate ACT's action chunking - predict next 8 actions
+            const chunk = [];
+            for(let i=0; i<8; i++) {
+                // Simple heuristic: continue current action with some noise
+                chunk.push(Math.random() > 0.1 ? currentAction : Math.floor(Math.random() * 5));
+            }
+            return chunk;
+        }
+        
+        function updateActionChunk(action) {
+            const container = document.getElementById('action-chunk-viz');
+            container.innerHTML = '';
+            
+            const colors = ['bg-slate-700', 'bg-blue-500', 'bg-blue-400', 'bg-purple-500', 'bg-purple-400'];
+            const chunk = generateActionChunk(action);
+            
+            chunk.forEach((act, idx) => {
+                const bar = document.createElement('div');
+                bar.className = `flex-1 ${colors[act]} rounded-t transition-all duration-300`;
+                bar.style.height = `${20 + Math.random() * 60}%`;
+                bar.style.opacity = 1 - (idx * 0.1);
+                container.appendChild(bar);
+            });
+        }
+        
+        function toggleRecording() {
+            const btn = document.getElementById('btn-record');
+            const indicator = document.getElementById('rec-indicator');
+            
+            if(!isRecording) {
+                isRecording = true;
+                currentEpisode = [];
+                btn.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 recording-pulse"></span> 停止采集';
+                btn.classList.add('bg-red-600/40');
+                indicator.style.opacity = '1';
+                indicator.classList.add('recording-pulse');
+                log('Started recording episode...', 'success');
+            } else {
+                isRecording = false;
+                if(currentEpisode.length > 0) {
+                    episodes.push([...currentEpisode]);
+                    document.getElementById('episode-count').textContent = episodes.length;
+                    log(`Episode saved. Total episodes: ${episodes.length}`, 'success');
+                }
+                btn.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> 开始采集';
+                btn.classList.remove('bg-red-600/40');
+                indicator.style.opacity = '0.3';
+                indicator.classList.remove('recording-pulse');
+                
+                // Enable training if we have data
+                if(episodes.length > 0) {
+                    document.getElementById('btn-train').disabled = false;
+                    document.getElementById('btn-save').disabled = false;
+                }
+            }
+        }
+        
+        function resetRobot() {
+            robotState.x = 0;
+            robotState.z = 0;
+            robotState.rotation = 0;
+            robotState.velocity = 0;
+            robotState.angularVelocity = 0;
+            
+            if (robot) {
+                robot.position.set(0, 0, 0);
+                robot.rotation.y = 0;
+            }
+            
+            log('Robot position reset to origin', 'warning');
+        }
+        
+        function saveDataset() {
+            if(episodes.length === 0) return;
+            
+            const dataset = {
+                metadata: {
+                    robot_type: "diff_drive",
+                    action_space: "discrete_5",
+                    fps: 10,
+                    created: new Date().toISOString()
+                },
+                episodes: episodes
+            };
+            
+            const blob = new Blob([JSON.stringify(dataset, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `lerobot_act_dataset_${Date.now()}.json`;
+            a.click();
+            
+            log('Dataset downloaded successfully', 'success');
+        }
+        
+        function startTraining() {
+            if(episodes.length === 0) return;
+            
+            isTraining = true;
+            document.getElementById('training-progress').classList.remove('hidden');
+            document.getElementById('btn-train').disabled = true;
+            document.getElementById('status-badge').textContent = '训练中...';
+            document.getElementById('status-badge').className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium text-blue-400 border border-blue-500/30';
+            
+            log('Initializing ACT training...', 'info');
+            log(`Dataset: ${episodes.length} episodes, ${episodes.reduce((a,b) => a+b.length, 0)} frames`, 'info');
+            
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += Math.random() * 2;
+                if(progress >= 100) {
+                    progress = 100;
+                    clearInterval(interval);
+                    finishTraining();
+                }
+                
+                document.getElementById('train-bar').style.width = progress + '%';
+                document.getElementById('train-percent').textContent = Math.floor(progress) + '%';
+                
+                if(progress < 30) document.getElementById('train-status').textContent = 'Loading data...';
+                else if(progress < 60) document.getElementById('train-status').textContent = 'Training CVAE encoder...';
+                else if(progress < 90) document.getElementById('train-status').textContent = 'Optimizing transformer...';
+                else document.getElementById('train-status').textContent = 'Finalizing...';
+                
+            }, 100);
+        }
+        
+        function finishTraining() {
+            isTraining = false;
+            trainedModel = {
+                name: 'ACT_Model_v1',
+                chunks: 8,
+                dim: 512,
+                trained_at: new Date().toISOString()
+            };
+            
+            document.getElementById('training-progress').classList.add('hidden');
+            document.getElementById('model-select').innerHTML = '<option value="act_model_v1">ACT_Model_v1 (Ready)</option>';
+            document.getElementById('btn-infer').disabled = false;
+            document.getElementById('status-badge').textContent = '训练完成';
+            document.getElementById('status-badge').className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium text-green-400 border border-green-500/30';
+            
+            log('Training complete! Model ready for inference.', 'success');
+            log('Model: ACT with CVAE prior, Chunk size: 8', 'info');
+        }
+        
+        function startInference() {
+            if(!trainedModel) return;
+            
+            isInferencing = !isInferencing;
+            const btn = document.getElementById('btn-infer');
+            
+            if(isInferencing) {
+                btn.textContent = '停止推理';
+                btn.classList.remove('bg-green-600/20', 'text-green-400');
+                btn.classList.add('bg-red-600/20', 'text-red-400');
+                document.getElementById('status-badge').textContent = 'ACT 自主推理中';
+                document.getElementById('status-badge').className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium text-purple-400 border border-purple-500/30 recording-pulse';
+                log('Starting ACT inference...', 'success');
+                
+                // Start autonomous navigation toward target
+                runInference();
+            } else {
+                btn.textContent = '启动自主推理';
+                btn.classList.add('bg-green-600/20', 'text-green-400');
+                btn.classList.remove('bg-red-600/20', 'text-red-400');
+                document.getElementById('status-badge').textContent = '手动控制模式';
+                document.getElementById('status-badge').className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium text-slate-300 border border-slate-700';
+                log('Inference stopped.', 'warning');
+                clearTimeout(inferenceTimeoutId);
+            }
+        }
+        
+        function runInference() {
+            if(!isInferencing || !target) return;
+            
+            // Simple ACT inference simulation: navigate to target
+            const dx = target.position.x - robotState.x;
+            const dz = target.position.z - robotState.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            
+            if(dist > 0.5) {
+                const angle = Math.atan2(dx, dz);
+                const angleDiff = angle - robotState.rotation;
+                
+                // Normalize angle
+                let normalizedDiff = angleDiff;
+                while(normalizedDiff > Math.PI) normalizedDiff -= 2*Math.PI;
+                while(normalizedDiff < -Math.PI) normalizedDiff += 2*Math.PI;
+                
+                if(Math.abs(normalizedDiff) > 0.1) {
+                    if(normalizedDiff > 0) sendCommand('left');
+                    else sendCommand('right');
+                } else {
+                    sendCommand('forward');
+                }
+            } else {
+                log('Target reached!', 'success');
+                setTimeout(() => {
+                    if(isInferencing) {
+                        // Random new target
+                        target.position.set(
+                            (Math.random() - 0.5) * 12,
+                            0.4,
+                            (Math.random() - 0.5) * 12
+                        );
+                        log('New target assigned', 'info');
+                    }
+                }, 1000);
+            }
+            
+            inferenceTimeoutId = setTimeout(runInference, 500);
+        }
+        
+        function toggleAttention() {
+            const overlay = document.getElementById('attention-overlay');
+            overlay.style.opacity = overlay.style.opacity === '1' ? '0' : '1';
+        }
+        
+        function log(message, type = 'info') {
+            const container = document.getElementById('log-container');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function clearLogs() {
+            document.getElementById('log-container').innerHTML = '';
+        }
+        
+        function checkCollisions(newX, newZ) {
+            let collided = false;
+            const robotRadius = 0.7;
+            
+            const checkAABB = (objX, objZ, w, d) => {
+                return (newX > objX - w/2 - robotRadius && 
+                        newX < objX + w/2 + robotRadius && 
+                        newZ > objZ - d/2 - robotRadius && 
+                        newZ < objZ + d/2 + robotRadius);
+            };
+            
+            walls.forEach(wall => {
+                if (checkAABB(wall.position.x, wall.position.z, wall.userData.w, wall.userData.d)) {
+                    collided = true;
+                    if(isRecording) log('Collision detected: Obstacle', 'warning');
+                }
+            });
+
+            if (target && checkAABB(target.position.x, target.position.z, target.userData.w, target.userData.d)) {
+                collided = true;
+                if(isRecording) log('Collision detected: Target', 'warning');
+            }
+            
+            return collided;
+        }
+        
+        function updatePhysics() {
+            const nextX = robotState.x + Math.sin(robotState.rotation) * robotState.velocity;
+            const nextZ = robotState.z + Math.cos(robotState.rotation) * robotState.velocity;
+            
+            if (!checkCollisions(nextX, nextZ)) {
+                robotState.x = nextX;
+                robotState.z = nextZ;
+            } else {
+                robotState.velocity = 0;
+            }
+            
+            robotState.rotation += robotState.angularVelocity;
+            
+            // Friction
+            robotState.velocity *= 0.9;
+            robotState.angularVelocity *= 0.9;
+            
+            // Update robot mesh
+            if (robot) {
+                robot.position.x = robotState.x;
+                robot.position.z = robotState.z;
+                robot.rotation.y = robotState.rotation;
+            }
+            
+            // Update camera follow
+            if (camera) {
+                camera.position.x = robotState.x;
+                camera.position.z = robotState.z + 12;
+                camera.lookAt(robotState.x, 0, robotState.z);
+            }
+            
+            // Update UI
+            document.getElementById('pos-x').textContent = robotState.x.toFixed(2);
+            document.getElementById('pos-z').textContent = robotState.z.toFixed(2);
+            document.getElementById('rot-y').textContent = (robotState.rotation * 180 / Math.PI).toFixed(0) + '°';
+            document.getElementById('velocity').textContent = (Math.abs(robotState.velocity) * 10).toFixed(1);
+        }
+        
+        function onWindowResize() {
+            const container = document.getElementById('canvas-container');
+            if (!camera || !renderer) return;
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            updatePhysics();
+            updateOnboardCamera();
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+        
+        // Initialize
+        window.onload = initThree;
+    </script>
+</body>
+</html>

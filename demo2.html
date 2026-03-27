@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AKA ACT Simulator (Main)</title>
+    <title>LeRobot ACT Simulator (Vanilla JS)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
@@ -34,10 +34,6 @@
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #5f82aa; border-radius: 2px; }
-        .attention-heatmap {
-            background: radial-gradient(circle at 50% 50%, rgba(255, 0, 0, 0.3), transparent 70%);
-            mix-blend-mode: screen;
-        }
     </style>
 </head>
 <body class="h-screen flex flex-col grid-bg">
@@ -47,8 +43,8 @@
         <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">🤖</div>
             <div>
-                <h1 class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">AKA ACT Simulator</h1>
-                <p class="text-xs text-slate-400 mono">Action Chunking with Transformers - Main Edition</p>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">LeRobot ACT Simulator</h1>
+                <p class="text-xs text-slate-400 mono">Action Chunking with Transformers - Vanilla JS Edition</p>
             </div>
         </div>
         <div class="flex items-center gap-4 text-sm">
@@ -100,11 +96,8 @@
 
                 <!-- Scene Settings -->
                 <div class="space-y-3">
-                    <button class="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none" onclick="document.getElementById('sceneSettingsContent').classList.toggle('hidden'); this.querySelector('.chevron').textContent = document.getElementById('sceneSettingsContent').classList.contains('hidden') ? '▼' : '▲';">
-                        <span>场景设置</span>
-                        <span class="chevron text-[10px]">▼</span>
-                    </button>
-                    <div id="sceneSettingsContent" class="space-y-2 hidden">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">场景设置</h3>
+                    <div class="space-y-2">
                         <select id="sceneType" class="w-full bg-slate-800/50 border border-slate-700 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500">
                             <option value="basic">基础场景 (Basic)</option>
                             <option value="living_room">客厅场景 (Living Room)</option>
@@ -126,63 +119,39 @@
                     </div>
                 </div>
 
-                <!-- Light Settings -->
-                <div class="space-y-3">
-                    <button class="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none" onclick="document.getElementById('lightSettingsContent').classList.toggle('hidden'); this.querySelector('.chevron').textContent = document.getElementById('lightSettingsContent').classList.contains('hidden') ? '▼' : '▲';">
-                        <span>光源设置</span>
-                        <span class="chevron text-[10px]">▼</span>
-                    </button>
-                    <div id="lightSettingsContent" class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 hidden">
-                        <label class="flex items-center gap-2">
-                            <span class="w-4">X:</span> <input type="range" id="lightX" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                        </label>
-                        <label class="flex items-center gap-2">
-                            <span class="w-4">Y:</span> <input type="range" id="lightY" min="5" max="40" value="20" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                        </label>
-                        <label class="flex items-center gap-2">
-                            <span class="w-4">Z:</span> <input type="range" id="lightZ" min="-30" max="30" value="10" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                        </label>
-                    </div>
-                </div>
-
                 <!-- Robot Control -->
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('robotControlContent').classList.toggle('hidden'); this.querySelector('.chevron').textContent = document.getElementById('robotControlContent').classList.contains('hidden') ? '▼' : '▲';">
-                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">小车控制</span>
-                        <div class="flex items-center gap-2">
-                            <button id="resetRobotBtn" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-2 py-1 rounded transition-all">↺ 复位</button>
-                            <span class="chevron text-[10px] text-slate-400">▼</span>
-                        </div>
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">小车控制</h3>
+                        <button id="resetRobotBtn" class="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-2 py-1 rounded transition-all">↺ 复位</button>
                     </div>
-                    <div id="robotControlContent" class="space-y-3 hidden">
-                        <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
-                            <label class="flex items-center gap-2">
-                                <span class="w-8">速度:</span>
-                                <input type="range" id="speedRange" min="0.05" max="0.5" step="0.01" value="0.1" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                                <span id="speedVal" class="w-8 text-right">0.10</span>
-                            </label>
-                            <label class="flex items-center gap-2">
-                                <span class="w-8">转向:</span>
-                                <input type="range" id="turnSpeedRange" min="0.01" max="0.2" step="0.01" value="0.05" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
-                                <span id="turnSpeedVal" class="w-8 text-right">0.05</span>
-                            </label>
-                        </div>
-                        <div class="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
-                            <div></div>
-                            <button id="btnW" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
-                                <span class="text-lg leading-none">↑</span><span class="text-[10px]">W</span>
-                            </button>
-                            <div></div>
-                            <button id="btnA" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
-                                <span class="text-lg leading-none">←</span><span class="text-[10px]">A</span>
-                            </button>
-                            <button id="btnS" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
-                                <span class="text-lg leading-none">↓</span><span class="text-[10px]">S</span>
-                            </button>
-                            <button id="btnD" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
-                                <span class="text-lg leading-none">→</span><span class="text-[10px]">D</span>
-                            </button>
-                        </div>
+                    <div class="space-y-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">速度:</span>
+                            <input type="range" id="speedRange" min="0.05" max="0.5" step="0.01" value="0.1" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <span id="speedVal" class="w-8 text-right">0.10</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <span class="w-8">转向:</span>
+                            <input type="range" id="turnSpeedRange" min="0.01" max="0.2" step="0.01" value="0.05" class="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <span id="turnSpeedVal" class="w-8 text-right">0.05</span>
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
+                        <div></div>
+                        <button id="btnW" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">↑</span><span class="text-[10px]">W</span>
+                        </button>
+                        <div></div>
+                        <button id="btnA" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">←</span><span class="text-[10px]">A</span>
+                        </button>
+                        <button id="btnS" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">↓</span><span class="text-[10px]">S</span>
+                        </button>
+                        <button id="btnD" class="control-btn bg-slate-800 hover:bg-slate-700 text-white p-2 rounded border border-slate-600 flex flex-col items-center gap-1 active:bg-blue-600">
+                            <span class="text-lg leading-none">→</span><span class="text-[10px]">D</span>
+                        </button>
                     </div>
                 </div>
 
@@ -218,7 +187,7 @@
 
                 <!-- Training -->
                 <div class="space-y-3">
-                    <h3 id="trainingHeader" class="text-sm font-semibold text-slate-300 uppercase tracking-wider">ACT 模型训练</h3>
+                    <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">ACT 模型训练</h3>
                     <button id="startTrainingBtn" disabled class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50">开始训练模型</button>
                     <div id="trainingProgressContainer" class="space-y-2 hidden">
                         <div class="flex justify-between text-xs text-slate-400">
@@ -235,17 +204,10 @@
                 <!-- Inference -->
                 <div class="space-y-3">
                     <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">模型推理</h3>
-                    <div id="cloudModelDisplay" class="text-xs text-purple-300 bg-purple-900/20 p-2 rounded border border-purple-500/20 mb-2 hidden">
-                        当前云端模型: <span id="currentCloudModelName">未选择</span>
-                    </div>
                     <select id="modelSelect" class="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
                         <option value="" disabled selected>ACT_Model_v1 (请先训练)</option>
                     </select>
                     <button id="toggleInferenceBtn" disabled class="w-full bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50">启动自主推理</button>
-                    <div class="flex items-center gap-2 text-xs text-slate-500">
-                        <input type="checkbox" id="showAttention" class="rounded bg-slate-800 border-slate-600">
-                        <label for="showAttention">显示注意力热力图</label>
-                    </div>
                 </div>
             </div>
         </aside>
@@ -270,21 +232,6 @@
             <div class="h-48 bg-black border-b border-slate-800 relative">
                 <canvas id="cameraCanvas" class="w-full h-full object-cover"></canvas>
                 <div class="absolute top-2 left-2 text-xs mono text-green-400 bg-black/50 px-2 py-1 rounded">CAM_01 (Onboard)</div>
-                <div class="absolute bottom-2 right-2 text-xs text-slate-500">30 FPS</div>
-                <div id="attentionHeatmap" class="absolute inset-0 attention-heatmap pointer-events-none transition-opacity duration-300 opacity-0"></div>
-            </div>
-
-            <!-- Action Chunking Visualization -->
-            <div class="h-32 border-b border-slate-800 p-3 bg-slate-900/30">
-                <h4 class="text-xs font-semibold text-slate-400 mb-2 uppercase">Action Chunking (ACT)</h4>
-                <div id="actionChunkViz" class="flex items-end gap-1 h-16">
-                    <div class="flex-1 bg-slate-800 rounded-t text-center text-[10px] text-slate-600 pt-2">Waiting...</div>
-                </div>
-                <div class="flex justify-between text-[10px] text-slate-600 mt-1 mono">
-                    <span>t+0</span>
-                    <span>t+4</span>
-                    <span>t+8</span>
-                </div>
             </div>
 
             <div class="flex-1 flex flex-col min-h-0">
@@ -328,8 +275,7 @@
                 sceneType: 'basic',
                 sceneSize: 'medium',
                 sceneComplexity: 'medium',
-                collisionProtection: true,
-                lightPos: { x: 10, y: 20, z: 10 }
+                collisionProtection: true
             }
         };
 
@@ -420,6 +366,10 @@
                         for (let k = 0; k < this.CHUNK_SIZE; k++) {
                             const futureIndex = Math.min(i + k, episode.length - 1);
                             const futureFrame = episode[futureIndex];
+                            // Assuming action is [v, w] for simplicity in frontend training
+                            // Or [up, down, left, right, stop] one-hot
+                            // We need to match what the model expects.
+                            // For frontend simplified training, we map to v, w
                             let v=0, w=0;
                             const a = futureFrame.action;
                             if(a[0]) v = 0.1;
@@ -448,17 +398,19 @@
                         const chunkSteps = ep.slice(i, i + this.CHUNK_SIZE);
                         const firstStep = chunkSteps[0];
                         
+                        // Ensure state has 14 dims
                         const s = firstStep.state || new Array(14).fill(0);
+                        // Env state 7 dims
                         const es = new Array(7).fill(0);
-                        es[0]=s[0]; es[1]=s[1]; es[2]=s[2]; es[3]=s[3]; es[4]=s[5];
-                        es[6]=s[4];
+                        es[0]=s[0]; es[1]=s[1]; es[2]=s[2]; es[3]=s[3]; es[4]=s[5]; // collision
+                        es[6]=s[4]; // targetDist
 
                         const actionChunk = [];
                         const padChunk = [];
                         const imageChunk = [];
 
                         chunkSteps.forEach(step => {
-                            actionChunk.push(step.action);
+                            actionChunk.push(step.action); // [1,0,0,0,0]
                             padChunk.push(0);
                             const img = step.imageBase64 || "";
                             if (img) hasImages = true;
@@ -466,7 +418,7 @@
                         });
 
                         for (let pad = chunkSteps.length; pad < this.CHUNK_SIZE; pad++) {
-                            actionChunk.push([0,0,0,0,1]);
+                            actionChunk.push([0,0,0,0,1]); // Stop
                             padChunk.push(1);
                             imageChunk.push([""]);
                         }
@@ -479,56 +431,7 @@
                     }
                 });
                 return { states, env_states, actions, action_is_pad, images: hasImages ? images : undefined };
-            },
-            createModel() {
-                const imageInput = tf.input({shape: [64, 64, 3]});
-                const stateInput = tf.input({shape: [14]});
-
-                const h1 = tf.layers.conv2d({filters: 16, kernelSize: 3, activation: 'relu'}).apply(imageInput);
-                const h2 = tf.layers.maxPooling2d({poolSize: 2}).apply(h1);
-                const h3 = tf.layers.conv2d({filters: 32, kernelSize: 3, activation: 'relu'}).apply(h2);
-                const h4 = tf.layers.maxPooling2d({poolSize: 2}).apply(h3);
-                const h5 = tf.layers.flatten().apply(h4);
-                
-                const s1 = tf.layers.dense({units: 32, activation: 'relu'}).apply(stateInput);
-                
-                const concatenated = tf.layers.concatenate().apply([h5, s1]);
-                
-                const d1 = tf.layers.dense({units: 128, activation: 'relu'}).apply(concatenated);
-                const output = tf.layers.dense({units: this.CHUNK_SIZE * 2, activation: 'linear'}).apply(d1);
-                
-                const model = tf.model({inputs: [imageInput, stateInput], outputs: output});
-                model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
-                
-                return model;
-            },
-            async trainModel(model, data, onEpochEnd) {
-                const xsImage = tf.tensor4d(data.imageInputs);
-                const xsState = tf.tensor2d(data.stateInputs);
-                const ys = tf.tensor2d(data.labelChunks);
-
-                await model.fit([xsImage, xsState], ys, {
-                    epochs: 50,
-                    batchSize: 32,
-                    shuffle: true,
-                    callbacks: {
-                        onEpochEnd
-                    }
-                });
-
-                xsImage.dispose();
-                xsState.dispose();
-                ys.dispose();
-            },
-            predict(model, image, state) {
-                return tf.tidy(() => {
-                    const imageTensor = tf.tensor4d([image]);
-                    const stateTensor = tf.tensor2d([state]);
-                    const prediction = model.predict([imageTensor, stateTensor]);
-                    return prediction.dataSync();
-                });
             }
-
         };
 
         // --- DOM Elements ---
@@ -557,6 +460,7 @@
             modelSelect: document.getElementById('modelSelect'),
             toggleInferenceBtn: document.getElementById('toggleInferenceBtn'),
             collisionProtection: document.getElementById('collisionProtection'),
+            // New Cloud Elements
             modeFrontendBtn: document.getElementById('modeFrontendBtn'),
             modeCloudBtn: document.getElementById('modeCloudBtn'),
             cloudConfigPanel: document.getElementById('cloudConfigPanel'),
@@ -564,24 +468,7 @@
             refreshCloudDatasetsBtn: document.getElementById('refreshCloudDatasetsBtn'),
             cloudModelSelect: document.getElementById('cloudModelSelect'),
             refreshCloudModelsBtn: document.getElementById('refreshCloudModelsBtn'),
-            cloudStatusDisplay: document.getElementById('cloudStatusDisplay'),
-            trainingHeader: document.getElementById('trainingHeader'),
-            cloudModelDisplay: document.getElementById('cloudModelDisplay'),
-            currentCloudModelName: document.getElementById('currentCloudModelName'),
-            showAttention: document.getElementById('showAttention'),
-            attentionHeatmap: document.getElementById('attentionHeatmap'),
-            actionChunkViz: document.getElementById('actionChunkViz'),
-            sceneType: document.getElementById('sceneType'),
-            sceneSize: document.getElementById('sceneSize'),
-            sceneComplexity: document.getElementById('sceneComplexity'),
-            lightX: document.getElementById('lightX'),
-            lightY: document.getElementById('lightY'),
-            lightZ: document.getElementById('lightZ'),
-            speedRange: document.getElementById('speedRange'),
-            speedVal: document.getElementById('speedVal'),
-            turnSpeedRange: document.getElementById('turnSpeedRange'),
-            turnSpeedVal: document.getElementById('turnSpeedVal'),
-            clearLogsBtn: document.getElementById('clearLogsBtn'),
+            cloudStatusDisplay: document.getElementById('cloudStatusDisplay')
         };
 
         // --- Mode Switching ---
@@ -595,8 +482,6 @@
                 els.startTrainingBtn.textContent = '开始训练模型';
                 els.saveDatasetBtn.textContent = '保存 (Save)';
                 els.toggleInferenceBtn.textContent = state.isInferencing ? '停止推理' : '启动自主推理';
-                els.trainingHeader.textContent = 'ACT 模型训练';
-                els.cloudModelDisplay.classList.add('hidden');
                 
                 // Reset model select for frontend
                 els.modelSelect.innerHTML = '<option value="" disabled selected>ACT_Model_v1 (请先训练)</option>';
@@ -615,8 +500,6 @@
                 els.startTrainingBtn.textContent = '开始云端训练';
                 els.saveDatasetBtn.textContent = '上传 (Upload)';
                 els.toggleInferenceBtn.textContent = state.isInferencing ? '停止推理' : '启动云端推理';
-                els.trainingHeader.textContent = 'ACT 云端训练';
-                els.cloudModelDisplay.classList.remove('hidden');
                 
                 // Fetch cloud data
                 fetchCloudData();
@@ -675,10 +558,7 @@
         };
 
         els.cloudDatasetSelect.onchange = (e) => state.selectedCloudDataset = e.target.value;
-        els.cloudModelSelect.onchange = (e) => {
-            state.selectedCloudModel = e.target.value;
-            els.currentCloudModelName.textContent = e.target.value || '未选择';
-        };
+        els.cloudModelSelect.onchange = (e) => state.selectedCloudModel = e.target.value;
 
         // --- Logging ---
         function addLog(msg, type = 'info') {
@@ -688,6 +568,8 @@
             els.logContainer.appendChild(div);
             els.logContainer.scrollTop = els.logContainer.scrollHeight;
         }
+        document.getElementById('clearLogsBtn').onclick = () => els.logContainer.innerHTML = '';
+
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x1a1a24);
@@ -755,250 +637,64 @@
         const envGroup = new THREE.Group();
         scene.add(envGroup);
 
-        // --- Texture Generation ---
-        const createTexture = (type) => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 512;
-            canvas.height = 512;
-            const ctx = canvas.getContext('2d');
-            
-            if (type === 'wood') {
-                ctx.fillStyle = '#8b5a2b';
-                ctx.fillRect(0, 0, 512, 512);
-                for(let i=0; i<200; i++) {
-                    ctx.fillStyle = `rgba(60, 30, 10, ${Math.random()*0.15})`;
-                    ctx.fillRect(0, Math.random()*512, 512, Math.random()*10);
-                }
-            } else if (type === 'tile') {
-                ctx.fillStyle = '#e2e8f0';
-                ctx.fillRect(0, 0, 512, 512);
-                ctx.strokeStyle = '#94a3b8';
-                ctx.lineWidth = 4;
-                for(let i=0; i<=512; i+=64) {
-                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
-                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
-                }
-            } else if (type === 'tennis') {
-                ctx.fillStyle = '#1e5631';
-                ctx.fillRect(0, 0, 512, 512);
-                ctx.strokeStyle = 'white';
-                ctx.lineWidth = 4;
-                ctx.strokeRect(64, 32, 384, 448);
-                ctx.beginPath(); ctx.moveTo(100, 32); ctx.lineTo(100, 480); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(412, 32); ctx.lineTo(412, 480); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(100, 128); ctx.lineTo(412, 128); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(100, 384); ctx.lineTo(412, 384); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(256, 128); ctx.lineTo(256, 384); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(256, 32); ctx.lineTo(256, 40); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(256, 480); ctx.lineTo(256, 472); ctx.stroke();
-                ctx.lineWidth = 6;
-                ctx.beginPath(); ctx.moveTo(64, 256); ctx.lineTo(448, 256); ctx.stroke();
-            } else if (type === 'wall') {
-                ctx.fillStyle = '#f8fafc';
-                ctx.fillRect(0, 0, 512, 512);
-                for(let i=0; i<500; i++) {
-                    ctx.fillStyle = `rgba(0,0,0,${Math.random()*0.03})`;
-                    ctx.beginPath();
-                    ctx.arc(Math.random()*512, Math.random()*512, Math.random()*2, 0, Math.PI*2);
-                    ctx.fill();
-                }
-            }
-            
-            const tex = new THREE.CanvasTexture(canvas);
-            tex.wrapS = THREE.RepeatWrapping;
-            tex.wrapT = THREE.RepeatWrapping;
-            if (type !== 'tennis') tex.repeat.set(4, 4); // Default repeat
-            return tex;
-        };
-
-        const textures = {
-            wood: createTexture('wood'),
-            tile: createTexture('tile'),
-            tennis: createTexture('tennis'),
-            wall: createTexture('wall')
-        };
-
         // --- Scene Logic ---
         function updateScene() {
             // Clear old
             while(envGroup.children.length > 0) envGroup.remove(envGroup.children[0]);
             state.walls = [];
             
-            const sceneType = els.sceneType.value;
-            const sceneSize = els.sceneSize.value;
-            const sceneComplexity = els.sceneComplexity.value;
-
-            let sizeVal = 20;
-            if (sceneSize === 'small') sizeVal = 10;
-            if (sceneSize === 'large') sizeVal = 30;
+            let size = state.config.sceneSize === 'small' ? 10 : state.config.sceneSize === 'large' ? 30 : 20;
+            let numObstacles = state.config.sceneComplexity === 'low' ? 2 : state.config.sceneComplexity === 'high' ? 10 : 5;
             
-            const halfSize = sizeVal / 2;
-            
-            // Update Floor
-            if (sceneType === 'living_room') {
-                planeMat.map = textures.wood;
-                planeMat.color.setHex(0xffffff);
-                textures.wood.repeat.set(sizeVal/5, sizeVal/5);
-            } else if (sceneType === 'classroom') {
-                planeMat.map = textures.tile;
-                planeMat.color.setHex(0xffffff);
-                textures.tile.repeat.set(sizeVal/5, sizeVal/5);
-            } else if (sceneType === 'tennis_court') {
-                planeMat.map = textures.tennis;
-                planeMat.color.setHex(0xffffff);
-            } else {
-                planeMat.map = null;
-                planeMat.color.setHex(0x2a2a34);
-            }
-            planeMat.needsUpdate = true;
-
-            const wallMat = new THREE.MeshStandardMaterial({ map: textures.wall, color: 0xd1d5db, roughness: 0.9 });
-            textures.wall.repeat.set(1, 1);
-
             // Walls helper
-            const addWall = (x, z, w, h, d, color, map) => {
-                const mat = color ? new THREE.MeshStandardMaterial({ color, map: map || null }) : wallMat;
-                const geo = new THREE.BoxGeometry(w, h, d);
-                const mesh = new THREE.Mesh(geo, mat);
+            const addWall = (x, z, w, h, d, color) => {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color }));
                 mesh.position.set(x, h/2, z);
                 mesh.castShadow = true;
-                mesh.receiveShadow = true;
                 mesh.userData = { w, d };
                 envGroup.add(mesh);
                 state.walls.push(mesh);
             };
 
             // Boundaries
-            if (sceneType !== 'tennis_court') {
-                addWall(0, -halfSize, sizeVal, 2, 0.5);
-                addWall(0, halfSize, sizeVal, 2, 0.5);
-                addWall(-halfSize, 0, 0.5, 2, sizeVal);
-                addWall(halfSize, 0, 0.5, 2, sizeVal);
-            } else {
-                addWall(0, -30, 60, 2, 0.5);
-                addWall(0, 30, 60, 2, 0.5);
-                addWall(-30, 0, 0.5, 2, 60);
-                addWall(30, 0, 0.5, 2, 60);
-            }
-
-            let numObstacles = 2;
-            if (sceneComplexity === 'medium') numObstacles = 5;
-            if (sceneComplexity === 'high') numObstacles = 12;
+            const half = size/2;
+            addWall(0, -half, size, 2, 1, 0x1e293b);
+            addWall(0, half, size, 2, 1, 0x1e293b);
+            addWall(-half, 0, 1, 2, size, 0x1e293b);
+            addWall(half, 0, 1, 2, size, 0x1e293b);
 
             // Obstacles
-            if (sceneType === 'basic') {
-                for(let i=0; i<numObstacles; i++) {
-                    const w = 1 + Math.random() * 2;
-                    const d = 1 + Math.random() * 2;
-                    const x = (Math.random() - 0.5) * (sizeVal - 4);
-                    const z = (Math.random() - 0.5) * (sizeVal - 4);
-                    if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
-                    addWall(x, z, w, 1.5, d, 0x64748b);
-                }
-            } else if (sceneType === 'living_room') {
-                addWall(0, -halfSize + 2, 4, 1, 1.5, 0x334155);
-                addWall(0, -halfSize + 1.2, 4, 2, 0.5, 0x334155);
-                addWall(0, halfSize - 1, 3, 0.8, 1, 0x8b5cf6);
-                addWall(0, -halfSize + 4, 2, 0.5, 1.5, 0xffffff, textures.wood);
-                
-                for(let i=0; i<numObstacles - 3; i++) {
-                    const w = 0.8 + Math.random() * 1;
-                    const d = 0.8 + Math.random() * 1;
-                    const x = (Math.random() - 0.5) * (sizeVal - 4);
-                    const z = (Math.random() - 0.5) * (sizeVal - 4);
-                    if (Math.abs(x) < 3 && Math.abs(z) < 3) continue;
-                    addWall(x, z, w, 1 + Math.random(), d, 0x475569);
-                }
-            } else if (sceneType === 'classroom') {
-                const rows = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
-                const cols = Math.min(4, Math.max(2, Math.floor(numObstacles / 2)));
-                for(let r=0; r<rows; r++) {
-                    for(let c=0; c<cols; c++) {
-                        const x = -halfSize/2 + 2 + c * 3;
-                        const z = -halfSize/2 + 2 + r * 3;
-                        if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
-                        addWall(x, z, 1.5, 0.8, 1, 0xffffff, textures.wood);
-                    }
-                }
-                addWall(0, halfSize - 2, 3, 1, 1.5, 0xffffff, textures.wood);
-            } else if (sceneType === 'tennis_court') {
-                const netMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, wireframe: true });
-                const netGeo = new THREE.BoxGeometry(60, 1, 0.5);
-                const net = new THREE.Mesh(netGeo, netMat);
-                net.position.set(0, 0.5, 0);
-                envGroup.add(net);
+            for(let i=0; i<numObstacles; i++) {
+                const x = (Math.random()-0.5)*(size-4);
+                const z = (Math.random()-0.5)*(size-4);
+                if(Math.abs(x)<2 && Math.abs(z)<2) continue;
+                addWall(x, z, 1+Math.random(), 1.5, 1+Math.random(), 0x475569);
             }
 
             // Target
-            if (state.target) envGroup.remove(state.target);
-            const targetGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-            const targetMat = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.4 });
-            const target = new THREE.Mesh(targetGeo, targetMat);
-            target.position.set(halfSize/2 - 1, 0.4, halfSize/2 - 1);
-            target.castShadow = true;
+            const target = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+            target.position.set(half/2 - 1, 0.4, half/2 - 1);
             target.userData = { w: 0.8, d: 0.8 };
             envGroup.add(target);
             state.target = target;
             
-            // Ball (Obstacle)
-            const ballGeo = new THREE.SphereGeometry(0.25, 16, 16);
-            const ballMat = new THREE.MeshStandardMaterial({ color: 0xccff00, roughness: 0.8 });
-            const ball = new THREE.Mesh(ballGeo, ballMat);
-            ball.position.set(-halfSize/2 + 1.5, 0.25, halfSize/2 - 1.5);
-            ball.castShadow = true;
-            ball.userData = { w: 0.5, d: 0.5 };
-            envGroup.add(ball);
-            state.walls.push(ball);
-
-            addLog(`Scene updated: ${sceneType}, ${sceneSize}, ${sceneComplexity}`);
+            addLog(`Scene updated: ${state.config.sceneType}`);
         }
         updateScene();
 
-        // Listeners for scene changes
-        els.sceneType.onchange = (e) => { e.target.blur(); updateScene(); };
-        els.sceneSize.onchange = (e) => { e.target.blur(); updateScene(); };
-        els.sceneComplexity.onchange = (e) => { e.target.blur(); updateScene(); };
-
-        // Light Controls
-        const updateLight = () => {
-            dirLight.position.set(
-                Number(els.lightX.value),
-                Number(els.lightY.value),
-                Number(els.lightZ.value)
-            );
-        };
-        els.lightX.oninput = updateLight;
-        els.lightY.oninput = updateLight;
-        els.lightZ.oninput = updateLight;
-
         // --- Controls ---
-        document.addEventListener('keydown', e => {
-            const k = e.key.toLowerCase();
-            state.keys[k] = true;
-            if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) {
-                e.preventDefault();
-            }
-        });
+        document.addEventListener('keydown', e => state.keys[e.key.toLowerCase()] = true);
         document.addEventListener('keyup', e => state.keys[e.key.toLowerCase()] = false);
         
         ['w','a','s','d'].forEach(key => {
             const btn = document.getElementById(`btn${key.toUpperCase()}`);
-            if(btn) {
-                btn.addEventListener('mousedown', (e) => { e.preventDefault(); state.keys[key] = true; });
-                btn.addEventListener('mouseup', (e) => { e.preventDefault(); state.keys[key] = false; });
-                btn.addEventListener('mouseleave', (e) => { e.preventDefault(); state.keys[key] = false; });
-                btn.addEventListener('touchstart', (e) => { e.preventDefault(); state.keys[key] = true; });
-                btn.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[key] = false; });
-            }
+            btn.addEventListener('mousedown', () => state.keys[key] = true);
+            btn.addEventListener('mouseup', () => state.keys[key] = false);
+            btn.addEventListener('mouseleave', () => state.keys[key] = false);
         });
 
-        document.getElementById('resetRobotBtn').onclick = (e) => {
-            if (e) e.stopPropagation();
-            state.robot.x = 0;
-            state.robot.z = 0;
-            state.robot.rotation = 0;
-            state.robot.velocity = 0;
-            state.robot.angularVelocity = 0;
+        document.getElementById('resetRobotBtn').onclick = () => {
+            state.robot = { x: 0, z: 0, rotation: 0, velocity: 0, angularVelocity: 0 };
             robotGroup.position.set(0,0,0);
             robotGroup.rotation.y = 0;
             addLog('Robot reset', 'warning');
@@ -1009,15 +705,12 @@
             // Movement
             if (!state.isInferencing && !state.isTraining) {
                 let v = 0, w = 0;
-                if (state.keys['w'] || state.keys['arrowup']) v += Number(els.speedRange.value);
-                if (state.keys['s'] || state.keys['arrowdown']) v -= Number(els.speedRange.value);
-                if (state.keys['a'] || state.keys['arrowleft']) w += Number(els.turnSpeedRange.value);
-                if (state.keys['d'] || state.keys['arrowright']) w -= Number(els.turnSpeedRange.value);
+                if (state.keys['w'] || state.keys['arrowup']) v += state.config.speed;
+                if (state.keys['s'] || state.keys['arrowdown']) v -= state.config.speed;
+                if (state.keys['a'] || state.keys['arrowleft']) w += state.config.turnSpeed;
+                if (state.keys['d'] || state.keys['arrowright']) w -= state.config.turnSpeed;
                 state.robot.velocity = v;
                 state.robot.angularVelocity = w;
-                
-                els.speedVal.textContent = Number(els.speedRange.value).toFixed(2);
-                els.turnSpeedVal.textContent = Number(els.turnSpeedRange.value).toFixed(2);
             }
 
             // Physics
@@ -1068,18 +761,18 @@
 
             // Copy to UI Canvas
             const ctx = els.cameraCanvas.getContext('2d');
+            ctx.drawImage(renderer.domElement, 0, 0, els.cameraCanvas.width, els.cameraCanvas.height); // Fallback copy
+            // Better: Read pixels
             const pixels = new Uint8Array(320*240*4);
             renderer.readRenderTargetPixels(onboardRenderTarget, 0, 0, 320, 240, pixels);
-            
             const imgData = ctx.createImageData(320, 240);
-            for (let y = 0; y < 240; y++) {
-                for (let x = 0; x < 320; x++) {
-                    const srcIdx = ((239 - y) * 320 + x) * 4;
-                    const dstIdx = (y * 320 + x) * 4;
-                    imgData.data[dstIdx] = pixels[srcIdx];
-                    imgData.data[dstIdx+1] = pixels[srcIdx+1];
-                    imgData.data[dstIdx+2] = pixels[srcIdx+2];
-                    imgData.data[dstIdx+3] = 255;
+            // Flip Y
+            for(let y=0; y<240; y++) {
+                for(let x=0; x<320; x++) {
+                    const src = ((239-y)*320+x)*4;
+                    const dst = (y*320+x)*4;
+                    imgData.data.set(pixels.subarray(src, src+4), dst);
+                    imgData.data[dst+3] = 255;
                 }
             }
             ctx.putImageData(imgData, 0, 0);
@@ -1105,259 +798,307 @@
             
             // Collision Protection
             if (state.config.collisionProtection && state.isColliding) {
-                if (state.isRecording) {
-                    toggleRecording();
-                    // Discard last few frames
-                    if (state.currentEpisode.length < 10) {
-                        state.currentEpisode = [];
-                        addLog('Collision detected! Discarding short episode.', 'warning');
-                    } else {
-                        addLog('Collision detected! Stopping recording.', 'warning');
-                    }
-                }
+                addLog('Collision detected! Discarding last 1s...', 'warning');
+                state.currentEpisode.splice(-10); // Discard last 10 frames
+                toggleRecording();
                 return;
             }
 
-            // Record
-            if (state.isRecording) {
-                // Action: [v, -v, w, -w, stop]
-                const action = [0, 0, 0, 0, 0];
-                if (state.keys['w']) action[0] = 1;
-                else if (state.keys['s']) action[1] = 1;
-                else if (state.keys['a']) action[2] = 1;
-                else if (state.keys['d']) action[3] = 1;
-                else action[4] = 1; // Stop
+            const imageBase64 = smallCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+            const targetDist = Math.hypot(state.target.position.x - state.robot.x, state.target.position.z - state.robot.z);
 
-                const targetDist = state.target ? Math.sqrt(Math.pow(state.target.position.x - state.robot.x, 2) + Math.pow(state.target.position.z - state.robot.z, 2)) : 0;
+            // State Vector (14 dims)
+            const s = new Array(14).fill(0);
+            s[0] = state.robot.x;
+            s[1] = state.robot.z;
+            s[2] = state.robot.rotation;
+            s[3] = state.robot.velocity;
+            s[4] = targetDist;
+            s[5] = state.isColliding ? 1.0 : 0.0;
 
-                const frame = {
-                    image: tf.browser.fromPixels(smallCanvas).arraySync(),
-                    imageBase64: smallCanvas.toDataURL('image/jpeg', 0.7),
-                    state: [
-                        state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
-                        targetDist,
-                        state.isColliding ? 1 : 0, 
-                        0, 0, 0, 0, 0, 0, 0, 0 // Padding to 14
-                    ],
-                    action: action
-                };
-                state.currentEpisode.push(frame);
-                
-                els.frameCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0) + state.currentEpisode.length;
-                els.actionCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0) + state.currentEpisode.length;
+            // Action
+            let action = [0,0,0,0,1]; // Stop
+            if(state.keys['w']) action = [1,0,0,0,0];
+            else if(state.keys['s']) action = [0,1,0,0,0];
+            else if(state.keys['a']) action = [0,0,1,0,0];
+            else if(state.keys['d']) action = [0,0,0,1,0];
+
+            // TF Tensor (Image)
+            const imgTensor = tf.tidy(() => {
+                return tf.browser.fromPixels(smallCanvas).div(255.0).arraySync();
+            });
+
+            state.currentEpisode.push({
+                state: s,
+                image: imgTensor,
+                imageBase64: imageBase64,
+                action: action
+            });
+
+            // UI Stats
+            if(state.currentEpisode.length % 5 === 0) {
+                els.frameCount.textContent = state.currentEpisode.length;
+                els.actionCount.textContent = state.currentEpisode.length;
             }
         }
 
         function toggleRecording() {
             state.isRecording = !state.isRecording;
-            if (state.isRecording) {
+            if(state.isRecording) {
                 state.currentEpisode = [];
                 recordInterval = setInterval(captureFrame, 100); // 10Hz
-                els.toggleRecordBtn.className = 'flex-1 bg-red-600/40 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2';
+                els.toggleRecordBtn.classList.replace('bg-red-600/20', 'bg-red-600/40');
                 els.recordBtnText.textContent = '停止采集';
-                els.recordBtnDot.className = 'w-2 h-2 rounded-full bg-red-500 recording-pulse';
-                els.recordingIndicator.className = 'w-2 h-2 rounded-full bg-red-500 recording-pulse opacity-100';
-                addLog('Recording started...', 'info');
+                els.recordingIndicator.classList.remove('opacity-30');
+                els.recordingIndicator.classList.add('recording-pulse');
+                addLog('Started recording...');
             } else {
                 clearInterval(recordInterval);
-                if (state.currentEpisode.length > 0) {
-                    state.episodes.push(state.currentEpisode);
+                if(state.currentEpisode.length > 0) {
+                    state.episodes.push([...state.currentEpisode]);
                     els.episodesCount.textContent = state.episodes.length;
-                    addLog(`Episode saved: ${state.currentEpisode.length} frames`, 'success');
+                    els.saveDatasetBtn.disabled = false;
+                    els.startTrainingBtn.disabled = false;
+                    addLog(`Episode saved. Total: ${state.episodes.length}`, 'success');
                 }
-                els.toggleRecordBtn.className = 'flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 py-2 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2';
+                els.toggleRecordBtn.classList.replace('bg-red-600/40', 'bg-red-600/20');
                 els.recordBtnText.textContent = '开始采集';
-                els.recordBtnDot.className = 'w-2 h-2 rounded-full bg-red-500';
-                els.recordingIndicator.className = 'w-2 h-2 rounded-full bg-red-500 opacity-30';
-                els.saveDatasetBtn.disabled = false;
+                els.recordingIndicator.classList.add('opacity-30');
+                els.recordingIndicator.classList.remove('recording-pulse');
             }
         }
         els.toggleRecordBtn.onclick = toggleRecording;
-        els.collisionProtection.onchange = (e) => state.config.collisionProtection = e.target.checked;
 
         els.saveDatasetBtn.onclick = async () => {
             if (state.trainingMode === 'cloud') {
-                if (state.episodes.length === 0) return;
-                addLog('Packing dataset for cloud upload...', 'info');
+                if(state.episodes.length === 0) return;
+                addLog('Uploading dataset to cloud...', 'info');
                 const dataset = actService.packDataset(state.episodes);
-                addLog(`Uploading dataset (${dataset.states.length} chunks)...`, 'info');
                 const success = await cloudService.saveDataset(dataset);
                 if (success) {
                     addLog('Dataset uploaded successfully!', 'success');
-                    fetchCloudData(); // Refresh lists
+                    els.refreshCloudDatasetsBtn.click();
                 } else {
-                    addLog('Upload failed.', 'error');
+                    addLog('Failed to upload dataset.', 'error');
                 }
             } else {
-                const blob = new Blob([JSON.stringify(state.episodes)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
+                const blob = new Blob([JSON.stringify({ episodes: state.episodes })], {type: 'application/json'});
                 const a = document.createElement('a');
-                a.href = url;
-                a.download = `act_dataset_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+                a.href = URL.createObjectURL(blob);
+                a.download = `dataset_${Date.now()}.json`;
                 a.click();
-                addLog('Dataset saved locally.', 'success');
+                addLog('Dataset saved', 'success');
             }
         };
 
         document.getElementById('importDatasetInput').onchange = (e) => {
             const file = e.target.files[0];
-            if (!file) return;
+            if(!file) return;
             const reader = new FileReader();
             reader.onload = (ev) => {
                 try {
                     const data = JSON.parse(ev.target.result);
-                    state.episodes = data;
+                    state.episodes = data.episodes;
                     els.episodesCount.textContent = state.episodes.length;
-                    els.frameCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0);
-                    els.actionCount.textContent = state.episodes.reduce((a,b) => a + b.length, 0);
                     els.saveDatasetBtn.disabled = false;
-                    addLog(`Imported ${state.episodes.length} episodes.`, 'success');
-                } catch (err) {
-                    addLog('Failed to import dataset.', 'error');
-                }
+                    els.startTrainingBtn.disabled = false;
+                    addLog(`Imported ${state.episodes.length} episodes`, 'success');
+                } catch(err) { addLog('Import failed', 'error'); }
             };
             reader.readAsText(file);
         };
 
-        // --- Training ---
+        // --- Training (ACT) ---
+        const CHUNK_SIZE = 10;
+        
         async function startTraining() {
-            state.isTraining = true;
-            els.startTrainingBtn.disabled = true;
-            els.trainingProgressContainer.classList.remove('hidden');
-            
             if (state.trainingMode === 'cloud') {
                 if (!state.selectedCloudDataset) {
-                    addLog('Please select a cloud dataset first.', 'error');
-                    state.isTraining = false;
-                    els.startTrainingBtn.disabled = false;
+                    addLog('Please select a dataset for cloud training.', 'error');
                     return;
                 }
                 
-                addLog(`Starting Cloud Training on ${state.selectedCloudDataset}...`, 'info');
-                const started = await cloudService.startTraining(state.selectedCloudDataset);
-                if (!started) {
-                    addLog('Failed to start cloud training.', 'error');
-                    state.isTraining = false;
-                    els.startTrainingBtn.disabled = false;
-                    return;
-                }
-
-                // Poll status
-                const pollInterval = setInterval(async () => {
-                    const status = await cloudService.getTrainingStatus();
-                    if (status) {
-                        const progress = (status.epoch / status.total_epochs) * 100;
-                        els.trainingBar.style.width = `${progress}%`;
-                        els.trainingPercent.textContent = `${Math.floor(progress)}%`;
-                        els.trainingStatusText.textContent = `Epoch ${status.epoch}/${status.total_epochs} - Loss: ${status.loss.toFixed(4)}`;
+                state.isTraining = true;
+                els.startTrainingBtn.disabled = true;
+                els.trainingProgressContainer.classList.remove('hidden');
+                els.statusBadge.textContent = '云端训练中...';
+                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-blue-400 border-blue-500/30';
+                els.cloudStatusDisplay.classList.remove('hidden');
+                
+                addLog('Initiating Cloud Training...');
+                
+                const success = await cloudService.startTraining(state.selectedCloudDataset);
+                
+                if (success) {
+                    addLog('Cloud training started.', 'success');
+                    // Poll for status
+                    const interval = setInterval(async () => {
+                        const status = await cloudService.getTrainingStatus();
+                        state.cloudTrainingStatus = status;
                         
-                        if (status.status === 'completed') {
-                            clearInterval(pollInterval);
-                            state.isTraining = false;
-                            els.startTrainingBtn.disabled = false;
-                            addLog('Cloud Training Completed!', 'success');
-                            fetchCloudData(); // Refresh models
-                        } else if (status.status === 'failed') {
-                            clearInterval(pollInterval);
-                            state.isTraining = false;
-                            els.startTrainingBtn.disabled = false;
-                            addLog('Cloud Training Failed.', 'error');
+                        if (status) {
+                            els.cloudStatusDisplay.innerHTML = `Status: ${status.status}<br>Epoch: ${status.epoch}/${status.num_epochs}<br>Loss: ${status.avg_loss?.toFixed(4) ?? 'N/A'}`;
+                            
+                            if (status.num_epochs > 0) {
+                                const pct = (status.epoch / status.num_epochs) * 100;
+                                els.trainingBar.style.width = `${pct}%`;
+                                els.trainingPercent.textContent = `${Math.floor(pct)}%`;
+                                els.trainingStatusText.textContent = `Cloud Epoch ${status.epoch}/${status.num_epochs} - Loss: ${status.avg_loss?.toFixed(4) ?? 'N/A'}`;
+                            }
+                            
+                            if (status.status === 'completed' || status.status === 'failed') {
+                                clearInterval(interval);
+                                state.isTraining = false;
+                                els.startTrainingBtn.disabled = false;
+                                
+                                if (status.status === 'completed') {
+                                    addLog('Cloud training completed!', 'success');
+                                    els.refreshCloudModelsBtn.click();
+                                    els.statusBadge.textContent = '训练完成';
+                                    els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-green-400 border-green-500/30';
+                                    els.toggleInferenceBtn.disabled = false;
+                                } else {
+                                    addLog(`Cloud training failed: ${status.error || 'Unknown error'}`, 'error');
+                                    els.statusBadge.textContent = '训练失败';
+                                    els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-red-400 border-red-500/30';
+                                }
+                            }
                         }
-                    }
-                }, 1000);
-
-            } else {
-                addLog('Preparing Frontend Training Data...', 'info');
-                const data = actService.prepareTrainingData(state.episodes);
-                
-                addLog('Building Model...', 'info');
-                state.model = actService.createModel();
-                
-                addLog('Training Started...', 'info');
-                await actService.trainModel(state.model, data, (epoch, logs) => {
-                    const progress = ((epoch + 1) / 50) * 100;
-                    els.trainingBar.style.width = `${progress}%`;
-                    els.trainingPercent.textContent = `${Math.floor(progress)}%`;
-                    els.trainingStatusText.textContent = `Epoch ${epoch + 1}/50 - Loss: ${logs.loss.toFixed(4)}`;
-                });
-                
-                state.isTraining = false;
-                els.startTrainingBtn.disabled = false;
-                addLog('Frontend Training Completed!', 'success');
-                
-                // Update model select
-                const opt = document.createElement('option');
-                opt.text = 'ACT_Model_v1 (Ready)';
-                opt.value = 'v1';
-                els.modelSelect.appendChild(opt);
-                els.modelSelect.value = 'v1';
-            }
-        }
-        els.startTrainingBtn.onclick = startTraining;
-
-        // --- Visualization ---
-        function updateActionChunkViz(actions) {
-            els.actionChunkViz.innerHTML = '';
-            const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308', '#64748b']; // Red, Green, Blue, Yellow, Gray
-            
-            actions.forEach((act, i) => {
-                const bar = document.createElement('div');
-                bar.className = 'w-2 mx-0.5 rounded transition-all';
-                bar.style.backgroundColor = colors[act] || '#cbd5e1';
-                bar.style.height = `${Math.random() * 20 + 10}px`; // Dynamic height
-                els.actionChunkViz.appendChild(bar);
-            });
-        }
-
-        // --- Inference ---
-        let inferenceInterval;
-        
-        async function runInference() {
-            if (!state.isInferencing) return;
-
-            // Capture state
-            const targetDist = state.target ? Math.sqrt(Math.pow(state.target.position.x - state.robot.x, 2) + Math.pow(state.target.position.z - state.robot.z, 2)) : 0;
-            const currentState = [
-                state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
-                targetDist,
-                state.isColliding ? 1 : 0, 
-                0, 0, 0, 0, 0, 0, 0, 0 // Padding
-            ];
-
-            // Stuck Recovery
-            if (Math.abs(state.robot.x - state.lastX) < 0.01 && Math.abs(state.robot.z - state.lastZ) < 0.01) {
-                state.stuckCounter++;
-            } else {
-                state.stuckCounter = 0;
-            }
-            state.lastX = state.robot.x;
-            state.lastZ = state.robot.z;
-
-            if (state.stuckCounter > 20) { // 2 seconds stuck
-                addLog('Stuck detected! Recovering...', 'warning');
-                state.robot.velocity = -0.2;
-                state.robot.angularVelocity = 0.1;
-                setTimeout(runInference, 100);
+                    }, 2000);
+                } else {
+                    state.isTraining = false;
+                    els.startTrainingBtn.disabled = false;
+                    addLog('Failed to start cloud training.', 'error');
+                }
                 return;
             }
 
+            // Frontend Training
+            state.isTraining = true;
+            els.startTrainingBtn.disabled = true;
+            els.trainingProgressContainer.classList.remove('hidden');
+            els.statusBadge.textContent = '训练中...';
+            els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-blue-400 border-blue-500/30';
+
+            addLog('Preparing data...');
+            
+            // Prepare Data
+            const { imageInputs, stateInputs, labelChunks } = actService.prepareTrainingData(state.episodes);
+
+            if (imageInputs.length === 0) {
+                addLog('No data found!', 'error');
+                state.isTraining = false;
+                els.startTrainingBtn.disabled = false;
+                return;
+            }
+
+            // Model Definition
+            const imageInput = tf.input({shape: [64, 64, 3]});
+            const stateInput = tf.input({shape: [14]});
+            
+            const h1 = tf.layers.conv2d({filters: 16, kernelSize: 3, activation: 'relu'}).apply(imageInput);
+            const h2 = tf.layers.maxPooling2d({poolSize: 2}).apply(h1);
+            const h3 = tf.layers.flatten().apply(h2);
+            
+            const s1 = tf.layers.dense({units: 32, activation: 'relu'}).apply(stateInput);
+            const concat = tf.layers.concatenate().apply([h3, s1]);
+            const d1 = tf.layers.dense({units: 128, activation: 'relu'}).apply(concat);
+            const output = tf.layers.dense({units: CHUNK_SIZE * 2}).apply(d1);
+            
+            const model = tf.model({inputs: [imageInput, stateInput], outputs: output});
+            model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+
+            // Training Loop
+            const xsImage = tf.tensor4d(imageInputs);
+            const xsState = tf.tensor2d(stateInputs);
+            const ys = tf.tensor2d(labelChunks);
+
+            await model.fit([xsImage, xsState], ys, {
+                epochs: 20, // Reduced for demo speed
+                batchSize: 32,
+                callbacks: {
+                    onEpochEnd: (epoch, logs) => {
+                        const pct = ((epoch+1)/20)*100;
+                        els.trainingBar.style.width = `${pct}%`;
+                        els.trainingPercent.textContent = `${Math.floor(pct)}%`;
+                        els.trainingStatusText.textContent = `Epoch ${epoch+1}/20 - Loss: ${logs.loss.toFixed(4)}`;
+                    }
+                }
+            });
+
+            state.model = model;
+            state.isTraining = false;
+            
+            // UI Update
+            els.startTrainingBtn.textContent = '训练完成';
+            els.statusBadge.textContent = '训练完成';
+            els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-green-400 border-green-500/30';
+            
+            const opt = document.createElement('option');
+            opt.text = 'ACT_Model_v1 (Ready)';
+            opt.value = 'v1';
+            els.modelSelect.innerHTML = '';
+            els.modelSelect.appendChild(opt);
+            els.toggleInferenceBtn.disabled = false;
+            
+            addLog('Training complete!', 'success');
+            
+            xsImage.dispose(); xsState.dispose(); ys.dispose();
+        }
+        els.startTrainingBtn.onclick = startTraining;
+
+        // --- Inference ---
+        let inferenceTimeout;
+        
+        async function runInference() {
+            if(!state.isInferencing) return;
+
+            // Stuck Recovery
+            const distMoved = Math.hypot(state.robot.x - state.lastX, state.robot.z - state.lastZ);
+            state.lastX = state.robot.x;
+            state.lastZ = state.robot.z;
+            
+            if(Math.abs(state.robot.velocity) > 0.05 && distMoved < 0.005) state.stuckCounter++;
+            else state.stuckCounter = Math.max(0, state.stuckCounter-1);
+
+            if(state.stuckCounter > 20) {
+                addLog('Stuck! Recovering...', 'warning');
+                state.robot.velocity = -0.2;
+                state.robot.angularVelocity = (Math.random()-0.5)*2.0;
+                state.stuckCounter = 0;
+                inferenceTimeout = setTimeout(runInference, 1500);
+                return;
+            }
+
+            // Prepare Input
+            const targetDist = Math.hypot(state.target.position.x - state.robot.x, state.target.position.z - state.robot.z);
+            const s = new Array(14).fill(0);
+            s[0] = state.robot.x;
+            s[1] = state.robot.z;
+            s[2] = state.robot.rotation;
+            s[3] = state.robot.velocity;
+            s[4] = targetDist;
+            s[5] = state.isColliding ? 1.0 : 0.0;
+
             if (state.trainingMode === 'cloud') {
-                const envState = [
-                    state.robot.x, state.robot.z, state.robot.rotation, state.robot.velocity, 
-                    state.isColliding ? 1 : 0, 0, currentState[4] // targetDist
-                ];
-                
-                const action = await cloudService.runInferenceStep(currentState, envState);
+                // Cloud Inference
+                const envState = new Array(7).fill(0);
+                envState[0]=s[0]; envState[1]=s[1]; envState[2]=s[2]; envState[3]=s[3]; envState[4]=s[5];
+                envState[6]=s[4];
+
+                const action = await cloudService.runInferenceStep(s, envState);
                 
                 if (action) {
                     let v = 0, w = 0;
                     if (Array.isArray(action)) {
-                        if (action.length === 5) { // One-hot
-                            if(action[0]) v = 0.1;
-                            else if(action[1]) v = -0.1;
-                            else if(action[2]) w = 0.05;
-                            else if(action[3]) w = -0.05;
-                        } else if (action.length === 2) { // [v, w]
+                        // Assume [v, w] or similar vector
+                        // If it's the 5-dim one-hot [w, s, a, d, stop]
+                        if (action.length === 5) {
+                            if(action[0]>0.5) v=0.1;
+                            else if(action[1]>0.5) v=-0.1;
+                            else if(action[2]>0.5) w=0.05;
+                            else if(action[3]>0.5) w=-0.05;
+                        } else if (action.length === 2) {
                             v = action[0];
                             w = action[1];
                         }
@@ -1370,149 +1111,129 @@
                     }
                     
                     // Low-pass filter
-                    state.robot.velocity = state.robot.velocity * 0.5 + v * 0.5;
-                    state.robot.angularVelocity = state.robot.angularVelocity * 0.5 + w * 0.5;
-                    
-                    // Update Viz
-                    updateActionChunkViz([0, 1, 2, 3, 4].map(i => Math.floor(Math.random()*5))); // Fake viz for cloud
+                    state.robot.velocity = state.robot.velocity * 0.7 + v * 0.3;
+                    state.robot.angularVelocity = state.robot.angularVelocity * 0.7 + w * 0.3;
                 }
-                
-                setTimeout(runInference, 200); // Slower for cloud
 
             } else {
                 // Frontend Inference
-                const image = tf.browser.fromPixels(smallCanvas).arraySync();
-                const prediction = actService.predict(state.model, image, currentState);
-                
-                // Temporal Ensembling (Simplified)
-                if (!state.actionBuffer) state.actionBuffer = [];
-                
-                const newChunk = [];
-                for(let i=0; i<actService.CHUNK_SIZE; i++) {
-                    newChunk.push({
-                        v: prediction[i*2],
-                        w: prediction[i*2+1],
-                        weight: Math.exp(-0.5 * i)
-                    });
+                if (!state.model) return;
+
+                const ctx = smallCanvas.getContext('2d');
+                ctx.drawImage(els.cameraCanvas, 0, 0, 64, 64);
+                const imgTensor = tf.tidy(() => tf.browser.fromPixels(smallCanvas).div(255.0).expandDims(0));
+                const stateTensor = tf.tensor2d([s]);
+
+                // Predict
+                const pred = state.model.predict([imgTensor, stateTensor]).dataSync();
+                imgTensor.dispose(); stateTensor.dispose();
+
+                // Temporal Ensembling
+                const chunk = [];
+                for(let i=0; i<CHUNK_SIZE; i++) {
+                    chunk.push({ v: pred[i*2], w: pred[i*2+1], weight: Math.exp(-0.5*i) });
                 }
-                state.actionBuffer.push(newChunk);
-                if (state.actionBuffer.length > actService.CHUNK_SIZE) state.actionBuffer.shift();
-                
-                let sumV = 0, sumW = 0, totalWeight = 0;
-                state.actionBuffer.forEach((chunk, index) => {
-                    const offset = state.actionBuffer.length - 1 - index;
-                    if (offset < chunk.length) {
-                        const act = chunk[offset];
-                        sumV += act.v * act.weight;
-                        sumW += act.w * act.weight;
-                        totalWeight += act.weight;
+                state.actionBuffer.push(chunk);
+                if(state.actionBuffer.length > CHUNK_SIZE) state.actionBuffer.shift();
+
+                let sumV=0, sumW=0, totalW=0;
+                state.actionBuffer.forEach((c, idx) => {
+                    const offset = state.actionBuffer.length - 1 - idx;
+                    if(offset < c.length) {
+                        sumV += c[offset].v * c[offset].weight;
+                        sumW += c[offset].w * c[offset].weight;
+                        totalW += c[offset].weight;
                     }
                 });
-                
-                if (totalWeight > 0) {
-                    const targetV = sumV / totalWeight;
-                    const targetW = sumW / totalWeight;
+
+                if(totalW > 0) {
+                    const targetV = sumV/totalW;
+                    const targetW = sumW/totalW;
                     state.robot.velocity = state.robot.velocity * 0.5 + targetV * 0.5;
                     state.robot.angularVelocity = state.robot.angularVelocity * 0.5 + targetW * 0.5;
                 }
-
-                // Update Viz
-                // Map prediction to discrete actions for viz colors
-                const vizChunks = [];
-                for(let i=0; i<5; i++) { // Show first 5 steps
-                    const v = prediction[i*2];
-                    const w = prediction[i*2+1];
-                    let actIdx = 4; // Stop
-                    if (v > 0.05) actIdx = 1;
-                    else if (v < -0.05) actIdx = 2;
-                    else if (w > 0.02) actIdx = 3;
-                    else if (w < -0.02) actIdx = 0; // Fix mapping if needed
-                    vizChunks.push(actIdx);
-                }
-                updateActionChunkViz(vizChunks);
-
-                setTimeout(runInference, 100);
             }
-        }
 
-        function updateActionChunkViz(chunks) {
-            const colors = ['bg-slate-700', 'bg-blue-500', 'bg-blue-400', 'bg-purple-500', 'bg-purple-400'];
-            els.actionChunkViz.innerHTML = '';
-            chunks.forEach((act, idx) => {
-                const div = document.createElement('div');
-                div.className = `flex-1 ${colors[act] || 'bg-slate-700'} rounded-t transition-all duration-300`;
-                div.style.height = `${20 + Math.random() * 60}%`;
-                div.style.opacity = 1 - (idx * 0.1);
-                els.actionChunkViz.appendChild(div);
-            });
+            // Goal Check
+            if(targetDist < 1.0) {
+                addLog('Target Reached!', 'success');
+                state.target.position.set((Math.random()-0.5)*12, 0.4, (Math.random()-0.5)*12);
+                state.actionBuffer = [];
+            }
+
+            inferenceTimeout = setTimeout(runInference, state.trainingMode === 'cloud' ? 200 : 100);
         }
 
         els.toggleInferenceBtn.onclick = async () => {
-            if (state.isInferencing) {
-                state.isInferencing = false;
+            state.isInferencing = !state.isInferencing;
+            
+            if(state.isInferencing) {
+                if (state.trainingMode === 'cloud') {
+                    if (!state.selectedCloudModel) {
+                        addLog('Please select a cloud model.', 'error');
+                        state.isInferencing = false;
+                        return;
+                    }
+                    const success = await cloudService.startInference(state.selectedCloudModel);
+                    if (!success) {
+                        addLog('Failed to start cloud inference.', 'error');
+                        state.isInferencing = false;
+                        return;
+                    }
+                    els.toggleInferenceBtn.textContent = '停止推理';
+                    els.toggleInferenceBtn.classList.replace('bg-green-600/20', 'bg-red-600/20');
+                    els.statusBadge.textContent = 'Cloud 自主推理中';
+                    els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-purple-400 border-purple-500/30 recording-pulse';
+                    addLog('Cloud Inference started');
+                    runInference();
+                } else {
+                    if (!state.model) {
+                        addLog('No frontend model loaded.', 'error');
+                        state.isInferencing = false;
+                        return;
+                    }
+                    els.toggleInferenceBtn.textContent = '停止推理';
+                    els.toggleInferenceBtn.classList.replace('bg-green-600/20', 'bg-red-600/20');
+                    els.statusBadge.textContent = 'ACT 自主推理中';
+                    els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-purple-400 border-purple-500/30 recording-pulse';
+                    addLog('Frontend Inference started');
+                    runInference();
+                }
+            } else {
+                clearTimeout(inferenceTimeout);
                 if (state.trainingMode === 'cloud') {
                     await cloudService.stopInference();
                 }
                 els.toggleInferenceBtn.textContent = state.trainingMode === 'cloud' ? '启动云端推理' : '启动自主推理';
-                els.toggleInferenceBtn.className = 'w-full bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50';
-                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-slate-300 border-slate-700';
+                els.toggleInferenceBtn.classList.replace('bg-red-600/20', 'bg-green-600/20');
                 els.statusBadge.textContent = '手动控制模式';
-                addLog('Inference stopped.', 'info');
-            } else {
-                if (state.trainingMode === 'cloud') {
-                    if (!state.selectedCloudModel) {
-                        addLog('Please select a cloud model first.', 'error');
-                        return;
-                    }
-                    const started = await cloudService.startInference(state.selectedCloudModel);
-                    if (!started) {
-                        addLog('Failed to start cloud inference.', 'error');
-                        return;
-                    }
-                } else {
-                    if (!state.model) {
-                        addLog('No frontend model trained!', 'error');
-                        return;
-                    }
-                }
-                
-                state.isInferencing = true;
-                els.toggleInferenceBtn.textContent = '停止推理';
-                els.toggleInferenceBtn.className = 'w-full bg-red-600/20 text-red-400 border-red-500/30 hover:bg-red-600/30 border py-2 rounded-lg font-medium transition-all disabled:opacity-50';
-                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-purple-400 border-purple-500/30 recording-pulse';
-                els.statusBadge.textContent = 'ACT 自主推理中';
-                addLog('Inference started...', 'success');
-                runInference();
+                els.statusBadge.className = 'absolute top-4 right-4 glass-panel px-4 py-2 rounded-full text-sm font-medium border text-slate-300 border-slate-700';
+                addLog('Inference stopped');
             }
         };
 
-        // Attention Heatmap Toggle
-        els.showAttention.onchange = (e) => {
-            els.attentionHeatmap.style.opacity = e.target.checked ? '1' : '0';
+        // UI Listeners
+        els.collisionProtection.onchange = (e) => state.config.collisionProtection = e.target.checked;
+        document.getElementById('speedRange').oninput = (e) => {
+            state.config.speed = Number(e.target.value);
+            document.getElementById('speedVal').textContent = state.config.speed.toFixed(2);
+        };
+        document.getElementById('turnSpeedRange').oninput = (e) => {
+            state.config.turnSpeed = Number(e.target.value);
+            document.getElementById('turnSpeedVal').textContent = state.config.turnSpeed.toFixed(2);
+        };
+        document.getElementById('sceneType').onchange = (e) => {
+            state.config.sceneType = e.target.value;
+            updateScene();
         };
 
-        // --- Window Resize ---
+        // Resize
         window.addEventListener('resize', () => {
-            if (els.container) {
-                camera.aspect = els.container.clientWidth / els.container.clientHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(els.container.clientWidth, els.container.clientHeight);
-            }
+            camera.aspect = els.container.clientWidth / els.container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(els.container.clientWidth, els.container.clientHeight);
         });
 
-        // --- Mobile Touch Controls ---
-        ['w','a','s','d'].forEach(key => {
-            const btn = document.getElementById(`btn${key.toUpperCase()}`);
-            if (btn) {
-                btn.addEventListener('touchstart', (e) => { e.preventDefault(); state.keys[key] = true; });
-                btn.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[key] = false; });
-            }
-        });
-
-        // --- Initialization ---
-        setTrainingMode('frontend');
-        addLog('System initialized. Ready.', 'info');
     </script>
 </body>
 </html>
-
