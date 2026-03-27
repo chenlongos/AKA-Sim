@@ -2,8 +2,8 @@ import {io} from "socket.io-client";
 
 export const socket = io({
     path: "/socket.io",
-    transports: ["websocket", "polling"],
-    upgrade: true,
+    transports: ["polling"],
+    upgrade: false,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 500,
