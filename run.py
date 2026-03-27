@@ -22,4 +22,3 @@ def run_https():
 
 if __name__ == '__main__':
     threading.Thread(target=run_http).start()
-    threading.Thread(target=run_https).start()

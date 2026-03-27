@@ -104,6 +104,11 @@ export default function App() {
     }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed]);
 
     useEffect(() => {
+        sim.current.speed = speed;
+        sim.current.turnSpeed = turnSpeed;
+    }, [speed, turnSpeed]);
+
+    useEffect(() => {
         localStorage.setItem('customObstacles', JSON.stringify(obstacles));
     }, [obstacles]);
 
@@ -148,6 +153,8 @@ export default function App() {
         onboardCamera: null as THREE.PerspectiveCamera | null,
         onboardRenderTarget: null as THREE.WebGLRenderTarget | null,
         keys: {} as Record<string, boolean>,
+        speed: 0.1,
+        turnSpeed: 0.05,
         animationFrameId: 0,
         inferenceTimeoutId: 0 as unknown as ReturnType<typeof setTimeout>,
         model: null as tf.LayersModel | null,
@@ -1665,30 +1672,44 @@ export default function App() {
         setTrainingProgress(0);
         setTrainingStatus('Preparing data with Action Chunking...');
 
-        addLog(`Initializing ACT training (Chunk Size: ${actService.CHUNK_SIZE})...`, 'info');
+        addLog(`Initializing ACT training (Chunk Size: ${actService.CHUNK_SIZE}, Max 300 frames)...`, 'info');
 
-        // Prepare Data with Action Chunking
-        const data = actService.prepareTrainingData(sim.current.episodes);
+        const trainingLog = (msg: string) => addLog(msg, 'info');
 
-        if (data.imageInputs.length === 0) {
-            addLog('No visual data found in episodes!', 'error');
-            setIsTraining(false);
+        try {
+            // Prepare Data with Action Chunking (async to keep UI responsive)
+            trainingLog('Preparing training data...');
+            const data = await actService.prepareTrainingData(sim.current.episodes);
+
+            if (data.imageInputs.length === 0) {
+                addLog('No visual data found in episodes! Make sure the camera canvas is rendering.', 'error');
+                return;
+            }
+
+            if (data.totalFrames && data.usedFrames && data.totalFrames > data.usedFrames) {
+                addLog(`Subsampled ${data.totalFrames} frames to ${data.usedFrames} for training (memory limit).`, 'warning');
+            }
+            trainingLog(`Training with ${data.imageInputs.length} frames.`);
+
+            // Define ACT Model
+            trainingLog('Creating model (dense-only, no conv)...');
+            const model = actService.createModel();
+            sim.current.model = model;
+
+            await actService.trainModel(model, data, (epoch, logs) => {
+                const progress = ((epoch + 1) / 20) * 100;
+                setTrainingProgress(progress);
+                setTrainingStatus(`Epoch ${epoch + 1}/20 - Loss: ${logs?.loss.toFixed(4)}`);
+            }, trainingLog);
+
+            await finishTraining();
+        } catch (err: any) {
+            addLog(`Training failed: ${err?.message || err}`, 'error');
+            console.error('Training error:', err);
+        } finally {
             sim.current.isTraining = false;
-            return;
+            setIsTraining(false);
         }
-
-        // Define ACT Model
-        const model = actService.createModel();
-        sim.current.model = model;
-
-        // Train
-        await actService.trainModel(model, data, (epoch, logs) => {
-            const progress = ((epoch + 1) / 50) * 100;
-            setTrainingProgress(progress);
-            setTrainingStatus(`Epoch ${epoch + 1}/50 - Loss: ${logs?.loss.toFixed(4)}`);
-        });
-
-        await finishTraining();
     };
 
     const runInference = useCallback(() => {

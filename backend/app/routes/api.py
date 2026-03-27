@@ -111,10 +111,18 @@ def save_dataset():
             return jsonify({"error": "invalid images"}), 400
         if len(images) != len(actions):
             return jsonify({"error": "images length mismatch"}), 400
+    def _sanitize_float_list(data):
+        """Recursively replace None/NaN/Inf with 0.0 to prevent tensor creation errors."""
+        if isinstance(data, list):
+            return [_sanitize_float_list(item) for item in data]
+        if data is None or (isinstance(data, float) and (math.isnan(data) or math.isinf(data))):
+            return 0.0
+        return data
+
     dataset = {
-        OBS_STATE: torch.tensor(states, dtype=torch.float32),
-        OBS_ENV_STATE: torch.tensor(env_states, dtype=torch.float32),
-        ACTION: torch.tensor(actions, dtype=torch.float32),
+        OBS_STATE: torch.tensor(_sanitize_float_list(states), dtype=torch.float32),
+        OBS_ENV_STATE: torch.tensor(_sanitize_float_list(env_states), dtype=torch.float32),
+        ACTION: torch.tensor(_sanitize_float_list(actions), dtype=torch.float32),
         "action_is_pad": torch.tensor(action_is_pad, dtype=torch.bool),
     }
     if rewards is not None:
