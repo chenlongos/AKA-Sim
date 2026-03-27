@@ -589,7 +589,7 @@ def infer_step():
         infer_state["chunk_index"] = 0
         action_vec = ensembled[0].numpy().tolist()
 
-    _apply_continuous_action(action_vec, action_dim)
+    # Return action only - backend does not apply physics (frontend handles it)
     return jsonify({
         "status": "ok",
         "action": action_vec,

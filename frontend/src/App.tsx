@@ -830,8 +830,8 @@ export default function App() {
         let v = 0, w = 0;
         if (keys['w'] || keys['arrowup']) v += sim.current.speed;
         if (keys['s'] || keys['arrowdown']) v -= sim.current.speed;
-        if (keys['a'] || keys['arrowleft']) w -= sim.current.turnSpeed;
-        if (keys['d'] || keys['arrowright']) w += sim.current.turnSpeed;
+        if (keys['a'] || keys['arrowleft']) w += sim.current.turnSpeed;
+        if (keys['d'] || keys['arrowright']) w -= sim.current.turnSpeed;
         const action = [v, w];
 
         const frame = {
@@ -976,8 +976,11 @@ export default function App() {
 
         state.rotation += state.angularVelocity;
 
-        state.velocity *= 0.9;
-        state.angularVelocity *= 0.9;
+        // Apply friction decay only in manual mode (skip during inference)
+        if (!sim.current.isInferencing) {
+            state.velocity *= 0.9;
+            state.angularVelocity *= 0.9;
+        }
 
         if (robot) {
             robot.position.x = state.x;
