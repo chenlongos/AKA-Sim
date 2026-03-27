@@ -9,6 +9,34 @@ import { createRobot } from './sim/robot';
 import { updateEnvironment } from './sim/environment';
 import { tr } from 'motion/react-client';
 
+interface Obstacle {
+    id: string;
+    x: number;
+    z: number;
+    w: number;
+    h: number;
+    d: number;
+    color: number;
+    type: 'box' | 'cylinder';
+    rotation: number;
+}
+
+interface ScenePreset {
+    id: string;
+    name: string;
+    sceneType: SceneType;
+    sceneSize: SceneSize;
+    sceneComplexity: SceneComplexity;
+    obstacles: Omit<Obstacle, 'id'>[];
+    targetPos: { x: number; z: number };
+    createdAt: string;
+}
+
+const SCENE_PRESETS_KEY = 'scenePresets';
+
+let obstacleIdCounter = 0;
+const nextObstacleId = () => `obs_${++obstacleIdCounter}_${Date.now()}`;
+
 export default function App() {
     // State
     const [isRecording, setIsRecording] = useState(false);
@@ -42,6 +70,28 @@ export default function App() {
     const [actionChunks, setActionChunks] = useState<number[]>([]);
     const [activeKeys, setActiveKeys] = useState<Record<string, boolean>>({});
 
+    // Obstacle placement
+    const [obstacles, setObstacles] = useState<Obstacle[]>(() => {
+        const saved = localStorage.getItem('customObstacles');
+        return saved ? JSON.parse(saved) : [];
+    });
+    const [placementMode, setPlacementMode] = useState<'none' | 'box' | 'cylinder'>('none');
+    const [selectedObstacleId, setSelectedObstacleId] = useState<string | null>(null);
+    const obstacleMeshes = useRef<Map<string, THREE.Mesh>>(new Map());
+    const placementModeRef = useRef(placementMode);
+    placementModeRef.current = placementMode;
+
+    // Scene presets
+    const [scenePresets, setScenePresets] = useState<ScenePreset[]>(() => {
+        const saved = localStorage.getItem(SCENE_PRESETS_KEY);
+        return saved ? JSON.parse(saved) : [];
+    });
+    const [savingPreset, setSavingPreset] = useState(false);
+
+    useEffect(() => {
+        localStorage.setItem(SCENE_PRESETS_KEY, JSON.stringify(scenePresets));
+    }, [scenePresets]);
+
     // Persist settings
     useEffect(() => {
         localStorage.setItem('sceneType', sceneType);
@@ -52,6 +102,10 @@ export default function App() {
         localStorage.setItem('speed', speed.toString());
         localStorage.setItem('turnSpeed', turnSpeed.toString());
     }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed]);
+
+    useEffect(() => {
+        localStorage.setItem('customObstacles', JSON.stringify(obstacles));
+    }, [obstacles]);
 
     // Cloud Training State
     const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
@@ -136,6 +190,162 @@ export default function App() {
 
     const clearLogs = () => setLogs([]);
 
+    // Obstacle management helpers
+    const addObstacleToScene = useCallback((obs: Obstacle) => {
+        const group = sim.current.environmentGroup;
+        if (!group) return;
+        let mesh: THREE.Mesh;
+        if (obs.type === 'cylinder') {
+            const geo = new THREE.CylinderGeometry(obs.w / 2, obs.w / 2, obs.h, 16);
+            const mat = new THREE.MeshStandardMaterial({ color: obs.color, roughness: 0.7 });
+            mesh = new THREE.Mesh(geo, mat);
+        } else {
+            const geo = new THREE.BoxGeometry(obs.w, obs.h, obs.d);
+            const mat = new THREE.MeshStandardMaterial({ color: obs.color, roughness: 0.7 });
+            mesh = new THREE.Mesh(geo, mat);
+        }
+        mesh.position.set(obs.x, obs.h / 2, obs.z);
+        mesh.rotation.y = obs.rotation;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData = { w: obs.w, d: obs.d, obstacleId: obs.id };
+        group.add(mesh);
+        sim.current.walls.push(mesh);
+        obstacleMeshes.current.set(obs.id, mesh);
+    }, []);
+
+    const removeObstacleFromScene = useCallback((id: string) => {
+        const mesh = obstacleMeshes.current.get(id);
+        if (!mesh) return;
+        const group = sim.current.environmentGroup;
+        if (group) group.remove(mesh);
+        sim.current.walls = sim.current.walls.filter(w => w.userData.obstacleId !== id);
+        obstacleMeshes.current.delete(id);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+    }, []);
+
+    const updateObstacleInScene = useCallback((id: string, updates: Partial<Obstacle>) => {
+        const mesh = obstacleMeshes.current.get(id);
+        if (!mesh) return;
+        if (updates.x !== undefined) mesh.position.x = updates.x;
+        if (updates.z !== undefined) mesh.position.z = updates.z;
+        if (updates.h !== undefined) mesh.position.y = updates.h / 2;
+        if (updates.rotation !== undefined) mesh.rotation.y = updates.rotation;
+    }, []);
+
+    const addObstacle = useCallback((x: number, z: number, type: 'box' | 'cylinder' = 'box') => {
+        const w = type === 'cylinder' ? 0.8 + Math.random() * 0.6 : 0.8 + Math.random() * 1.5;
+        const h = type === 'cylinder' ? 0.6 + Math.random() * 1.0 : 0.8 + Math.random() * 1.5;
+        const d = type === 'cylinder' ? w : 0.8 + Math.random() * 1.5;
+        const colors = [0x64748b, 0x475569, 0x78716c, 0x92400e, 0x1e3a5f, 0x7c2d12];
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const obs: Obstacle = { id: nextObstacleId(), x, z, w, h, d, color, type, rotation: 0 };
+        setObstacles(prev => [...prev, obs]);
+        addObstacleToScene(obs);
+        addLog(`Placed ${type} obstacle at (${x.toFixed(1)}, ${z.toFixed(1)})`, 'info');
+    }, [addObstacleToScene, addLog]);
+
+    const removeObstacle = useCallback((id: string) => {
+        removeObstacleFromScene(id);
+        setObstacles(prev => prev.filter(o => o.id !== id));
+        if (selectedObstacleId === id) setSelectedObstacleId(null);
+    }, [removeObstacleFromScene, selectedObstacleId]);
+
+    const clearAllObstacles = useCallback(() => {
+        obstacles.forEach(o => removeObstacleFromScene(o.id));
+        setObstacles([]);
+        setSelectedObstacleId(null);
+        addLog('All custom obstacles cleared', 'info');
+    }, [obstacles, removeObstacleFromScene, addLog]);
+
+    // Scene preset management
+    const saveScenePreset = useCallback((name: string) => {
+        const target = sim.current.target;
+        const preset: ScenePreset = {
+            id: `preset_${Date.now()}`,
+            name,
+            sceneType,
+            sceneSize,
+            sceneComplexity,
+            obstacles: obstacles.map(({ id: _, ...rest }) => rest),
+            targetPos: target ? { x: target.position.x, z: target.position.z } : { x: 0, z: -5 },
+            createdAt: new Date().toLocaleString(),
+        };
+        setScenePresets(prev => [...prev, preset]);
+        setSavingPreset(false);
+        addLog(`Scene saved: "${name}"`, 'success');
+    }, [sceneType, sceneSize, sceneComplexity, obstacles, addLog]);
+
+    const loadScenePreset = useCallback((preset: ScenePreset) => {
+        // Clear current obstacles from scene
+        obstacles.forEach(o => removeObstacleFromScene(o.id));
+
+        // Restore scene settings
+        setSceneType(preset.sceneType);
+        setSceneSize(preset.sceneSize);
+        setSceneComplexity(preset.sceneComplexity);
+
+        // Restore obstacles (re-assign IDs)
+        const newObstacles: Obstacle[] = preset.obstacles.map(o => ({
+            ...o,
+            id: nextObstacleId(),
+        }));
+        setObstacles(newObstacles);
+
+        // Restore target position
+        if (sim.current.target) {
+            sim.current.target.position.set(preset.targetPos.x, 0.25, preset.targetPos.z);
+        }
+
+        addLog(`Scene loaded: "${preset.name}" (${newObstacles.length} obstacles)`, 'success');
+    }, [obstacles, removeObstacleFromScene, addLog]);
+
+    const deleteScenePreset = useCallback((id: string) => {
+        setScenePresets(prev => {
+            const preset = prev.find(p => p.id === id);
+            if (preset) addLog(`Scene deleted: "${preset.name}"`, 'info');
+            return prev.filter(p => p.id !== id);
+        });
+    }, [addLog]);
+
+    const exportScenePreset = useCallback((preset: ScenePreset) => {
+        const json = JSON.stringify(preset, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `scene_${preset.name.replace(/\s+/g, '_')}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, []);
+
+    const importScenePreset = useCallback(() => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const preset = JSON.parse(reader.result as string) as ScenePreset;
+                    if (!preset.name || !preset.sceneType || !preset.obstacles) {
+                        addLog('Invalid scene file format', 'error');
+                        return;
+                    }
+                    setScenePresets(prev => [...prev, { ...preset, id: `preset_${Date.now()}` }]);
+                    addLog(`Scene imported: "${preset.name}"`, 'success');
+                } catch {
+                    addLog('Failed to parse scene file', 'error');
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    }, [addLog]);
+
     useEffect(() => {
         if (!canvasContainerRef.current) return;
 
@@ -186,6 +396,9 @@ export default function App() {
         scene.add(robot);
 
         // Dragging Logic
+        let draggingTarget = 'none' as 'none' | 'target' | 'obstacle';
+        let draggingObstacleId: string | null = null;
+
         const onMouseDown = (event: MouseEvent) => {
             if (!container || !sim.current.camera || !sim.current.target) return;
             
@@ -194,9 +407,35 @@ export default function App() {
             mouse.current.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
             
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
+
+            // Placement mode: click on ground to place obstacle
+            if (placementModeRef.current !== 'none') {
+                const planeIntersects = raycaster.current.intersectObject(sim.current.plane!);
+                if (planeIntersects.length > 0) {
+                    const point = planeIntersects[0].point;
+                    addObstacle(point.x, point.z, placementModeRef.current);
+                }
+                return;
+            }
+
+            // Check obstacles first (they are on top visually)
+            const obstacleMeshArr = Array.from(obstacleMeshes.current.values());
+            if (obstacleMeshArr.length > 0) {
+                const obsIntersects = raycaster.current.intersectObjects(obstacleMeshArr);
+                if (obsIntersects.length > 0) {
+                    draggingTarget = 'obstacle';
+                    draggingObstacleId = obsIntersects[0].object.userData.obstacleId;
+                    isDragging.current = true;
+                    setSelectedObstacleId(draggingObstacleId);
+                    if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
+                    return;
+                }
+            }
+
+            // Check target ball
             const intersects = raycaster.current.intersectObject(sim.current.target);
-            
             if (intersects.length > 0) {
+                draggingTarget = 'target';
                 isDragging.current = true;
                 if (renderer.domElement) renderer.domElement.style.cursor = 'grabbing';
             }
@@ -212,9 +451,16 @@ export default function App() {
             raycaster.current.setFromCamera(mouse.current, sim.current.camera);
 
             if (!isDragging.current) {
-                const intersects = raycaster.current.intersectObject(sim.current.target);
+                // Hover cursor
+                const obstacleMeshArr = Array.from(obstacleMeshes.current.values());
+                const obsIntersects = obstacleMeshArr.length > 0 ? raycaster.current.intersectObjects(obstacleMeshArr) : [];
+                const targetIntersects = raycaster.current.intersectObject(sim.current.target);
                 if (renderer.domElement) {
-                    renderer.domElement.style.cursor = intersects.length > 0 ? 'grab' : 'default';
+                    if (obsIntersects.length > 0 || targetIntersects.length > 0) {
+                        renderer.domElement.style.cursor = placementModeRef.current !== 'none' ? 'crosshair' : 'grab';
+                    } else {
+                        renderer.domElement.style.cursor = placementModeRef.current !== 'none' ? 'crosshair' : 'default';
+                    }
                 }
                 return;
             }
@@ -225,14 +471,21 @@ export default function App() {
             
             if (intersects.length > 0) {
                 const point = intersects[0].point;
-                sim.current.target.position.x = point.x;
-                sim.current.target.position.z = point.z;
+                if (draggingTarget === 'target') {
+                    sim.current.target.position.x = point.x;
+                    sim.current.target.position.z = point.z;
+                } else if (draggingTarget === 'obstacle' && draggingObstacleId) {
+                    setObstacles(prev => prev.map(o => o.id === draggingObstacleId ? { ...o, x: point.x, z: point.z } : o));
+                    updateObstacleInScene(draggingObstacleId, { x: point.x, z: point.z });
+                }
             }
         };
 
         const onMouseUp = () => {
             isDragging.current = false;
-            if (renderer.domElement) renderer.domElement.style.cursor = 'default';
+            draggingTarget = 'none';
+            draggingObstacleId = null;
+            if (renderer.domElement) renderer.domElement.style.cursor = placementModeRef.current !== 'none' ? 'crosshair' : 'default';
         };
 
         const onTouchStart = (event: TouchEvent) => {
@@ -467,7 +720,10 @@ export default function App() {
         sim.current.target = ball; // Use ball as the target since red cube is removed
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
-    }, [sceneType, sceneSize, sceneComplexity, addLog]);
+
+        // Restore custom obstacles after scene regeneration
+        obstacles.forEach(obs => addObstacleToScene(obs));
+    }, [sceneType, sceneSize, sceneComplexity, addLog, obstacles, addObstacleToScene]);
 
     const [enableCollisionProtection, setEnableCollisionProtection] = useState(() => {
         const saved = localStorage.getItem('enableCollisionProtection');
@@ -543,29 +799,33 @@ export default function App() {
         state[4] = targetDist;
         state[5] = sim.current.isColliding ? 1.0 : 0.0; // Explicitly tell model we are colliding
 
-        const envState = new Array(7).fill(0);
+        const envState = new Array(10).fill(0);
         envState[0] = x;
         envState[1] = z;
         envState[2] = angle;
         envState[3] = speed;
         envState[4] = sim.current.isColliding ? 1 : 0;
-        envState[5] = 0; // Forward distance placeholder
-        envState[6] = targetDist;
+        envState[5] = targetDist;
+        // Relative angle to ball (normalized to [-PI, PI])
+        const relAngleToBall = Math.atan2(
+            sim.current.target.position.x - x,
+            sim.current.target.position.z - z
+        ) - angle;
+        envState[6] = Math.sin(relAngleToBall); // sin component for angle diff
+        envState[7] = Math.cos(relAngleToBall); // cos component for angle diff
+        // Ball position relative to robot
+        envState[8] = sim.current.target.position.x - x;
+        envState[9] = sim.current.target.position.z - z;
 
-        // Action: [up, down, left, right, stop] (one-hot or similar)
-        // Reference uses commandToActionVec which returns 5-dim vector.
-        // Our current action is [velocity, angularVelocity].
-        // We need to map continuous controls to discrete if we want to match reference exactly,
-        // OR ensure the backend handles continuous.
-        // The reference metadata says "action_space: discrete_5".
-        // So we should map our keys to discrete actions.
-
-        let action = [0, 0, 0, 0, 1]; // Default stop
+        // Action: [velocity, angularVelocity] (continuous, 2-dim)
+        // Supports simultaneous forward + turning, matching real robot control.
         const keys = sim.current.keys;
-        if (keys['w'] || keys['arrowup']) action = [1, 0, 0, 0, 0];
-        else if (keys['s'] || keys['arrowdown']) action = [0, 1, 0, 0, 0];
-        else if (keys['a'] || keys['arrowleft']) action = [0, 0, 1, 0, 0];
-        else if (keys['d'] || keys['arrowright']) action = [0, 0, 0, 1, 0];
+        let v = 0, w = 0;
+        if (keys['w'] || keys['arrowup']) v += sim.current.speed;
+        if (keys['s'] || keys['arrowdown']) v -= sim.current.speed;
+        if (keys['a'] || keys['arrowleft']) w -= sim.current.turnSpeed;
+        if (keys['d'] || keys['arrowright']) w += sim.current.turnSpeed;
+        const action = [v, w];
 
         const frame = {
             state: state,
@@ -604,6 +864,21 @@ export default function App() {
             if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
                 e.preventDefault();
             }
+            // Obstacle interaction shortcuts (only when not in placement mode)
+            if (placementMode === 'none' && selectedObstacleId) {
+                if (key === 'r') {
+                    setObstacles(prev => prev.map(o => {
+                        if (o.id !== selectedObstacleId) return o;
+                        const newRot = o.rotation + Math.PI / 12;
+                        updateObstacleInScene(o.id, { rotation: newRot });
+                        return { ...o, rotation: newRot };
+                    }));
+                }
+                if (key === 'delete' || key === 'backspace') {
+                    e.preventDefault();
+                    removeObstacle(selectedObstacleId);
+                }
+            }
         };
 
         const handleKeyUp = (e: KeyboardEvent) => {
@@ -616,7 +891,7 @@ export default function App() {
             document.removeEventListener('keydown', handleKeyDown);
             document.removeEventListener('keyup', handleKeyUp);
         };
-    }, []);
+    }, [placementMode, selectedObstacleId, removeObstacle, updateObstacleInScene]);
 
     const updateRobotMovement = useCallback(() => {
         if (sim.current.isInferencing || sim.current.isTraining) return;
@@ -1165,7 +1440,7 @@ export default function App() {
     }, [trainingMode, fetchCloudModels, fetchCloudDatasets]);
 
     const CHUNK_SIZE = 10;
-    const ACTION_DIM = 5;
+    const ACTION_DIM = 2;
 
     const packDataset = (episodes: any[]) => {
         const states: number[][] = [];
@@ -1176,13 +1451,12 @@ export default function App() {
         let hasImages = false;
 
         episodes.forEach(ep => {
-            // ep is an array of frames
             for (let i = 0; i < ep.length; i += CHUNK_SIZE) {
                 const chunkSteps = ep.slice(i, i + CHUNK_SIZE);
                 const firstStep = chunkSteps[0];
 
                 const stateChunk = firstStep.state || new Array(14).fill(0);
-                const envChunk = firstStep.envState || new Array(7).fill(0);
+                const envChunk = firstStep.envState || new Array(10).fill(0);
 
                 const actionChunk: number[][] = [];
                 const padChunk: number[] = [];
@@ -1276,12 +1550,6 @@ export default function App() {
     const runCloudInference = useCallback(async () => {
         if (!sim.current.isInferencing) return;
 
-        const image = captureImage();
-        if (!image) return;
-
-        const imageBase64 = smallCanvasRef.current?.toDataURL('image/jpeg', 0.7).split(',')[1];
-        if (!imageBase64) return;
-
         const x = sim.current.robotState.x;
         const z = sim.current.robotState.z;
         const angle = sim.current.robotState.rotation;
@@ -1296,31 +1564,40 @@ export default function App() {
         state[4] = targetDist;
         state[5] = sim.current.isColliding ? 1.0 : 0.0;
 
-        const envState = new Array(7).fill(0);
+        const envState = new Array(10).fill(0);
         envState[0] = x;
         envState[1] = z;
         envState[2] = angle;
         envState[3] = speed;
         envState[4] = sim.current.isColliding ? 1 : 0;
-        envState[5] = 0; // forwardDist
-        envState[6] = targetDist;
+        envState[5] = targetDist;
+        if (sim.current.target) {
+            const relAngleToBall = Math.atan2(
+                sim.current.target.position.x - x,
+                sim.current.target.position.z - z
+            ) - angle;
+            envState[6] = Math.sin(relAngleToBall);
+            envState[7] = Math.cos(relAngleToBall);
+            envState[8] = sim.current.target.position.x - x;
+            envState[9] = sim.current.target.position.z - z;
+        }
 
-        // Note: runInferenceStep now expects envState as second argument
         const action = await cloudService.runInferenceStep(state, envState);
 
         if (!action) {
-            // Inference failed or stopped
             return;
         }
 
-        // Handle action based on type (string command or vector)
+        // Handle continuous action vector [velocity, angularVelocity]
         let v = 0;
         let w = 0;
-        const moveSpeed = 0.1; // Default speed for inference
-        const turnSpeedVal = 0.05;
-
-        if (typeof action === 'string') {
-            // Discrete command string
+        if (Array.isArray(action)) {
+            v = action[0] || 0;
+            w = action[1] || 0;
+        } else if (typeof action === 'string') {
+            // Legacy discrete command fallback
+            const moveSpeed = 0.1;
+            const turnSpeedVal = 0.05;
             switch (action) {
                 case 'up': v = moveSpeed; break;
                 case 'down': v = -moveSpeed; break;
@@ -1328,23 +1605,16 @@ export default function App() {
                 case 'right': w = -turnSpeedVal; break;
                 case 'stop': v = 0; w = 0; break;
             }
-        } else if (Array.isArray(action)) {
-            // Vector (probabilities or one-hot)
-            // [up, down, left, right, stop]
-            const maxIdx = action.indexOf(Math.max(...action));
-            switch (maxIdx) {
-                case 0: v = moveSpeed; break; // Up
-                case 1: v = -moveSpeed; break; // Down
-                case 2: w = turnSpeedVal; break; // Left
-                case 3: w = -turnSpeedVal; break; // Right
-                case 4: v = 0; w = 0; break; // Stop
-            }
         }
+
+        // Clamp
+        v = Math.max(-0.15, Math.min(0.15, v));
+        w = Math.max(-0.08, Math.min(0.08, w));
 
         sim.current.robotState.velocity = v;
         sim.current.robotState.angularVelocity = w;
 
-        sim.current.inferenceTimeoutId = setTimeout(runCloudInference, 200); // 5Hz = 200ms
+        sim.current.inferenceTimeoutId = setTimeout(runCloudInference, 200);
     }, [captureImage]);
 
     const startCloudInference = async () => {
@@ -1908,6 +2178,184 @@ export default function App() {
                                 </div>
                             </div>
 
+                            {/* Obstacle Placement Panel */}
+                            <div className="space-y-3">
+                                <button
+                                    className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
+                                    onClick={(e) => {
+                                        const content = e.currentTarget.nextElementSibling;
+                                        const chevron = e.currentTarget.querySelector('.chevron');
+                                        if (content && chevron) {
+                                            content.classList.toggle('hidden');
+                                            chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                        }
+                                    }}
+                                >
+                                    <span>放置障碍物</span>
+                                    <div className="flex items-center gap-1">
+                                        {obstacles.length > 0 && <span className="text-[10px] text-slate-500">{obstacles.length}</span>}
+                                        <span className="chevron text-[10px]">▼</span>
+                                    </div>
+                                </button>
+                                <div className="space-y-2 hidden">
+                                    {placementMode !== 'none' && (
+                                        <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-amber-900/30 border border-amber-700/50 text-xs text-amber-300">
+                                            <span className="animate-pulse">+</span>
+                                            <span>点击地面放置{placementMode === 'box' ? '方块' : '圆柱'}</span>
+                                            <button onClick={() => setPlacementMode('none')} className="ml-auto text-amber-400 hover:text-amber-200">取消</button>
+                                        </div>
+                                    )}
+                                    <div className="flex gap-1.5">
+                                        <button
+                                            onClick={() => setPlacementMode(placementMode === 'box' ? 'none' : 'box')}
+                                            className={`flex-1 text-xs py-1.5 rounded border transition-all ${placementMode === 'box' ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_8px_rgba(37,99,235,0.4)]' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
+                                        >
+                                            + 方块
+                                        </button>
+                                        <button
+                                            onClick={() => setPlacementMode(placementMode === 'cylinder' ? 'none' : 'cylinder')}
+                                            className={`flex-1 text-xs py-1.5 rounded border transition-all ${placementMode === 'cylinder' ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_8px_rgba(37,99,235,0.4)]' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'}`}
+                                        >
+                                            + 圆柱
+                                        </button>
+                                    </div>
+                                    {selectedObstacleId && (
+                                        <div className="flex gap-1.5 px-2 py-1.5 rounded bg-slate-800/50 border border-blue-800/50 text-xs">
+                                            <span className="text-blue-300">已选中</span>
+                                            <button onClick={() => {
+                                                setObstacles(prev => prev.map(o => {
+                                                    if (o.id !== selectedObstacleId) return o;
+                                                    const newRot = o.rotation + Math.PI / 12;
+                                                    updateObstacleInScene(o.id, { rotation: newRot });
+                                                    return { ...o, rotation: newRot };
+                                                }));
+                                            }} className="text-slate-300 hover:text-white bg-slate-700 px-1.5 rounded">旋转 R</button>
+                                            <button onClick={() => removeObstacle(selectedObstacleId)} className="text-red-400 hover:text-red-300 bg-slate-700 px-1.5 rounded">删除</button>
+                                            <button onClick={() => setSelectedObstacleId(null)} className="text-slate-400 hover:text-white bg-slate-700 px-1.5 rounded ml-auto">取消</button>
+                                        </div>
+                                    )}
+                                    {obstacles.length > 0 && (
+                                        <div className="max-h-32 overflow-y-auto space-y-1 text-xs text-slate-400">
+                                            {obstacles.map(obs => (
+                                                <div
+                                                    key={obs.id}
+                                                    onClick={() => setSelectedObstacleId(obs.id)}
+                                                    className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-all ${selectedObstacleId === obs.id ? 'bg-blue-900/40 border border-blue-700/50' : 'hover:bg-slate-800 border border-transparent'}`}
+                                                >
+                                                    <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: '#' + obs.color.toString(16).padStart(6, '0') }}></span>
+                                                    <span className="flex-1 truncate">{obs.type === 'box' ? '方块' : '圆柱'}</span>
+                                                    <span className="text-slate-500">({obs.x.toFixed(1)}, {obs.z.toFixed(1)})</span>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); removeObstacle(obs.id); }}
+                                                        className="text-slate-500 hover:text-red-400 ml-1"
+                                                    >x</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {obstacles.length > 0 && (
+                                        <button onClick={clearAllObstacles} className="w-full text-xs py-1 rounded border border-slate-700 text-slate-400 hover:text-red-400 hover:border-red-700/50 transition-all">
+                                            清除全部 ({obstacles.length})
+                                        </button>
+                                    )}
+                                    <div className="text-[10px] text-slate-600 leading-tight">
+                                        提示: 拖拽移动 | R 旋转 | Del 删除
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Scene Presets Panel */}
+                            <div className="space-y-3">
+                                <button
+                                    className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
+                                    onClick={(e) => {
+                                        const content = e.currentTarget.nextElementSibling;
+                                        const chevron = e.currentTarget.querySelector('.chevron');
+                                        if (content && chevron) {
+                                            content.classList.toggle('hidden');
+                                            chevron.textContent = content.classList.contains('hidden') ? '▼' : '▲';
+                                        }
+                                    }}
+                                >
+                                    <span>场景存档</span>
+                                    <div className="flex items-center gap-1">
+                                        {scenePresets.length > 0 && <span className="text-[10px] text-slate-500">{scenePresets.length}</span>}
+                                        <span className="chevron text-[10px]">▼</span>
+                                    </div>
+                                </button>
+                                <div className="space-y-2 hidden">
+                                    {/* Save current scene */}
+                                    {savingPreset ? (
+                                        <div className="flex gap-1.5">
+                                            <input
+                                                id="preset-name-input"
+                                                type="text"
+                                                placeholder="输入场景名称..."
+                                                className="flex-1 bg-slate-800/50 border border-slate-600 text-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-500 placeholder:text-slate-600"
+                                                autoFocus
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        const val = (e.target as HTMLInputElement).value.trim();
+                                                        if (val) saveScenePreset(val);
+                                                    }
+                                                    if (e.key === 'Escape') setSavingPreset(false);
+                                                }}
+                                            />
+                                            <button onClick={() => { const el = document.getElementById('preset-name-input') as HTMLInputElement | null; if (el && el.value.trim()) saveScenePreset(el.value.trim()); }} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2 py-1.5 rounded transition-all">保存</button>
+                                            <button onClick={() => setSavingPreset(false)} className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1.5 rounded transition-all">取消</button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex gap-1.5">
+                                            <button onClick={() => setSavingPreset(true)} className="flex-1 text-xs py-1.5 rounded border border-green-700/50 text-green-400 hover:bg-green-900/30 transition-all">
+                                                + 保存当前场景
+                                            </button>
+                                            <button onClick={importScenePreset} className="text-xs py-1.5 px-2 rounded border border-slate-600 text-slate-400 hover:bg-slate-800 transition-all" title="导入场景文件">
+                                                导入
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Preset list */}
+                                    {scenePresets.length > 0 && (
+                                        <div className="max-h-48 overflow-y-auto space-y-1 text-xs">
+                                            {scenePresets.map(preset => (
+                                                <div
+                                                    key={preset.id}
+                                                    className="flex items-center gap-2 px-2 py-1.5 rounded bg-slate-800/30 border border-slate-800 hover:border-slate-600 transition-all group"
+                                                >
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-slate-300 truncate">{preset.name}</div>
+                                                        <div className="text-[10px] text-slate-600">
+                                                            {preset.sceneType} · {preset.obstacles.length}个障碍物 · {preset.createdAt}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => loadScenePreset(preset)}
+                                                        className="text-blue-400 hover:text-blue-300 opacity-60 hover:opacity-100 transition-all"
+                                                        title="加载场景"
+                                                    >加载</button>
+                                                    <button
+                                                        onClick={() => exportScenePreset(preset)}
+                                                        className="text-slate-500 hover:text-slate-300 opacity-60 hover:opacity-100 transition-all"
+                                                        title="导出为JSON"
+                                                    >导出</button>
+                                                    <button
+                                                        onClick={() => deleteScenePreset(preset.id)}
+                                                        className="text-slate-600 hover:text-red-400 opacity-40 hover:opacity-100 transition-all"
+                                                        title="删除"
+                                                    >x</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {scenePresets.length === 0 && (
+                                        <div className="text-[10px] text-slate-600 text-center py-2">
+                                            暂无存档，配置好场景后点击保存
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div className="space-y-3">
                                 <button
                                     className="w-full flex justify-between items-center text-xs font-semibold text-slate-400 uppercase tracking-wider focus:outline-none"
@@ -2076,7 +2524,7 @@ export default function App() {
                                 <p className="text-[10px] text-slate-500 text-center mt-2">使用键盘 WASD 或方向键控制</p>
                             </div>
                         </div>
-                        {/* <div className="bg-slate-900/50 p-1 rounded-lg flex text-xs font-medium border border-slate-800">
+                        <div className="bg-slate-900/50 p-1 rounded-lg flex text-xs font-medium border border-slate-800">
                             <button
                                 onClick={() => setTrainingMode('frontend')}
                                 className={`flex-1 py-1.5 rounded-md transition-all ${trainingMode === 'frontend' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-400 hover:text-slate-300'}`}
@@ -2089,7 +2537,7 @@ export default function App() {
                             >
                                 服务器训练
                             </button>
-                        </div> */}
+                        </div>
                         <div className="space-y-3">
                             <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
                                 {/* <span className={`w-2 h-2 rounded-full bg-red-500 ${isRecording ? 'recording-pulse opacity-100' : 'opacity-30'}`}></span> */}
@@ -2243,7 +2691,7 @@ export default function App() {
                             </button>
                             <div className="flex items-center gap-2 text-xs text-slate-500">
                                 <input type="checkbox" id="show-attention" checked={showAttention} onChange={(e) => setShowAttention(e.target.checked)} className="rounded bg-slate-800 border-slate-600" />
-                                <label htmlFor="show-attention">显示注意力热力<span onClick={() => setTrainingMode(trainingMode === 'frontend' ? 'cloud' : 'frontend')}>图</span></label>
+                                <label htmlFor="show-attention">显示注意力热力图</label>
                             </div>
                         </div>
                     </div>
