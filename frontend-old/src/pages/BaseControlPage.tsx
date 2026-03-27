@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react";
-import {sendAction} from "../api/socket";
-import ControlButton from "../components/ControlButton";
+import {sendAction} from "../api/socket.ts";
+import ControlButton from "../components/ControlButton.tsx";
 
 const FPS = 20
 const frameInterval = 1000 / FPS
@@ -10,6 +10,8 @@ const BaseControlPage = () => {
     const [status, setStatus] = useState("准备就绪");
     const [isSimulator, setIsSimulator] = useState(false);
     const [targetIp, setTargetIp] = useState("");
+
+    // 当前正在执行的动作（用于模拟器每帧发送）
     const currentActionRef = useRef<string | null>(null);
 
     useEffect(() => {
@@ -66,22 +68,23 @@ const BaseControlPage = () => {
         }
     };
 
+    // ==== 按钮事件处理 ====
     const handlePressStart = (action: string) => {
         currentActionRef.current = action;
         if (!isSimulator) {
-            send(action);
+            send(action); // 实车立即发
         }
     };
 
     const handlePressEnd = () => {
         currentActionRef.current = null;
         if (!isSimulator) {
-            send("stop");
+            send("stop"); // 实车发 stop
         }
     };
 
     useEffect(() => {
-        if (!isSimulator) return;
+        if (!isSimulator) return; // 只在模拟器模式运行
         let animationFrameId: number
         let lastTime = 0;
         const renderLoop = (currentTime: number) => {
@@ -94,7 +97,7 @@ const BaseControlPage = () => {
             lastTime = currentTime - (delta % frameInterval)
 
             if (action !== null) {
-                sendAction(action);
+                sendAction(action); // 每帧发送当前动作
             }
         };
 
@@ -140,6 +143,7 @@ const BaseControlPage = () => {
             <h2>AKA-00 控制台</h2>
             <div style={{opacity: 0.6}}>{ip}</div>
 
+            {/* 模式状态 */}
             <div
                 style={{
                     marginTop: "15px",
@@ -162,6 +166,7 @@ const BaseControlPage = () => {
         </span>
             </div>
 
+            {/* 目标IP输入 */}
             {!isSimulator && (
                 <div style={{marginTop: "15px"}}>
                     <input
@@ -183,6 +188,7 @@ const BaseControlPage = () => {
                 </div>
             )}
 
+            {/* 方向区 */}
             <div
                 style={{
                     display: "flex",
@@ -230,6 +236,7 @@ const BaseControlPage = () => {
                 <div/>
             </div>
 
+            {/* 功能按钮 */}
             <div
                 style={{
                     display: "flex",
@@ -263,6 +270,7 @@ const BaseControlPage = () => {
                     flexWrap: "wrap",
                 }}
             >
+                {/* 跳转 */}
                 <div style={{marginTop: "40px"}}>
                     <ControlButton
                         size="wide"
@@ -273,6 +281,7 @@ const BaseControlPage = () => {
                     </ControlButton>
                 </div>
 
+                {/* 切换 */}
                 <div style={{marginTop: "40px"}}>
                     <ControlButton
                         size="wide"
@@ -280,16 +289,6 @@ const BaseControlPage = () => {
                         onClick={() => setIsSimulator(!isSimulator)}
                     >
                         切换模式
-                    </ControlButton>
-                </div>
-
-                <div style={{marginTop: "40px"}}>
-                    <ControlButton
-                        size="wide"
-                        variant="primary"
-                        onClick={() => window.location.href = '/sim3d'}
-                    >
-                        3D 模拟器
                     </ControlButton>
                 </div>
             </div>

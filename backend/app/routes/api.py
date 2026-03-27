@@ -59,6 +59,10 @@ infer_state = {
     "env_state_dim": 0,
     "action_dim": 0,
     "chunk_size": 0,
+    # Action chunk caching for temporal ensembling
+    "chunk_buffer": [],      # list of past action chunks for ensembling
+    "chunk_index": 0,        # current step index within the cached chunk
+    "current_chunk": None,   # (chunk_size, action_dim) tensor
 }
 
 
@@ -107,10 +111,18 @@ def save_dataset():
             return jsonify({"error": "invalid images"}), 400
         if len(images) != len(actions):
             return jsonify({"error": "images length mismatch"}), 400
+    def _sanitize_float_list(data):
+        """Recursively replace None/NaN/Inf with 0.0 to prevent tensor creation errors."""
+        if isinstance(data, list):
+            return [_sanitize_float_list(item) for item in data]
+        if data is None or (isinstance(data, float) and (math.isnan(data) or math.isinf(data))):
+            return 0.0
+        return data
+
     dataset = {
-        OBS_STATE: torch.tensor(states, dtype=torch.float32),
-        OBS_ENV_STATE: torch.tensor(env_states, dtype=torch.float32),
-        ACTION: torch.tensor(actions, dtype=torch.float32),
+        OBS_STATE: torch.tensor(_sanitize_float_list(states), dtype=torch.float32),
+        OBS_ENV_STATE: torch.tensor(_sanitize_float_list(env_states), dtype=torch.float32),
+        ACTION: torch.tensor(_sanitize_float_list(actions), dtype=torch.float32),
         "action_is_pad": torch.tensor(action_is_pad, dtype=torch.bool),
     }
     if rewards is not None:
@@ -239,47 +251,23 @@ def _list_models():
     return models
 
 
-def _map_action(action_vector, action_dim: int):
-    if action_dim >= 5:
-        idx = int(max(range(5), key=lambda i: action_vector[i]))
-        return ["up", "down", "left", "right", "stop"][idx]
-    if action_dim == 4:
-        idx = int(max(range(4), key=lambda i: action_vector[i]))
-        return ["up", "down", "left", "right"][idx]
-    if action_dim == 3:
-        idx = int(max(range(3), key=lambda i: action_vector[i]))
-        return ["up", "down", "stop"][idx]
-    if action_dim == 2:
-        move = float(action_vector[0])
-        turn = float(action_vector[1])
-        if abs(move) >= abs(turn):
-            return "up" if move >= 0 else "down"
-        return "right" if turn >= 0 else "left"
-    if action_dim == 1:
-        return "up" if float(action_vector[0]) >= 0 else "down"
-    return "stop"
+def _apply_continuous_action(action_vec, action_dim: int):
+    """Apply continuous action [velocity, angular_velocity] to car physics."""
+    velocity = float(action_vec[0])
+    angular_vel = float(action_vec[1]) if action_dim >= 2 else 0.0
 
+    # Clamp values
+    velocity = max(-0.15, min(0.15, velocity))
+    angular_vel = max(-0.08, min(0.08, angular_vel))
 
-def _apply_action(action: str):
-    if action == "up":
-        if car.speed < car.maxSpeed:
-            car.speed += car.acceleration
-    if action == "down":
-        if car.speed > -car.maxSpeed / 2:
-            car.speed -= car.acceleration
-    if action == "left":
-        car.angle -= car.rotationSpeed
-    if action == "right":
-        car.angle += car.rotationSpeed
+    car.speed += velocity
+    car.angle += angular_vel
 
+    # Friction
     car.speed *= car.friction
     car.x += math.cos(car.angle) * car.speed
     car.y += math.sin(car.angle) * car.speed
 
-    if action == "stop":
-        car.x -= math.cos(car.angle) * car.speed * 2
-        car.y -= math.sin(car.angle) * car.speed * 2
-        car.speed = 0
     state = car.get_state()
     socketio.emit("car_state", state)
 
@@ -538,6 +526,7 @@ def infer_step():
         state_dim = infer_state["state_dim"]
         env_state_dim = infer_state["env_state_dim"]
         action_dim = infer_state["action_dim"]
+        chunk_size = infer_state["chunk_size"]
 
     def _to_fixed_vec(raw, dim: int):
         vec = [0.0] * dim
@@ -553,6 +542,7 @@ def infer_step():
     data = request.get_json(silent=True) or {}
     state_input = data.get("state")
     env_input = data.get("env_state")
+    force_replan = data.get("force_replan", False)
 
     if state_input is None or env_input is None:
         state = car.get_state()
@@ -565,14 +555,47 @@ def infer_step():
         state_vec = _to_fixed_vec(state_input, state_dim)
         env_vec = _to_fixed_vec(env_input, env_state_dim)
 
-    state_tensor = torch.tensor([state_vec], dtype=torch.float32, device=device)
-    env_tensor = torch.tensor([env_vec], dtype=torch.float32, device=device)
-    with torch.no_grad():
-        actions, _ = model({OBS_STATE: state_tensor, OBS_ENV_STATE: env_tensor})
-    action_vec = actions[0, 0].detach().cpu().numpy().tolist()
-    action = _map_action(action_vec, action_dim)
-    _apply_action(action)
-    return jsonify({"status": "ok", "action": action, "action_vector": action_vec})
+    with infer_lock:
+        chunk_idx = infer_state["chunk_index"]
+        current_chunk = infer_state["current_chunk"]
+        chunk_buffer = infer_state["chunk_buffer"]
+
+        # Run model forward pass to get new action chunk
+        state_tensor = torch.tensor([state_vec], dtype=torch.float32, device=device)
+        env_tensor = torch.tensor([env_vec], dtype=torch.float32, device=device)
+        with torch.no_grad():
+            actions, _ = model({OBS_STATE: state_tensor, OBS_ENV_STATE: env_tensor})
+        # actions shape: (1, chunk_size, action_dim)
+        new_chunk = actions[0].detach().cpu()  # (chunk_size, action_dim)
+
+        # Temporal ensembling: average with past chunks using exponential decay
+        chunk_buffer.append(new_chunk)
+        if len(chunk_buffer) > chunk_size:
+            chunk_buffer.pop(0)
+
+        if len(chunk_buffer) >= 2:
+            ensembled = torch.zeros_like(new_chunk)
+            total_weight = 0.0
+            for i, past_chunk in enumerate(chunk_buffer):
+                weight = 0.5 ** (len(chunk_buffer) - 1 - i)  # exponential decay
+                ensembled += past_chunk * weight
+                total_weight += weight
+            ensembled /= total_weight
+        else:
+            ensembled = new_chunk
+
+        # Cache the ensembled chunk and use step-by-step
+        infer_state["current_chunk"] = ensembled
+        infer_state["chunk_index"] = 0
+        action_vec = ensembled[0].numpy().tolist()
+
+    # Return action only - backend does not apply physics (frontend handles it)
+    return jsonify({
+        "status": "ok",
+        "action": action_vec,
+        "action_dim": action_dim,
+        "chunk_size": chunk_size,
+    })
 
 
 @api_bp.route("/infer/stop", methods=["POST"])
@@ -589,6 +612,9 @@ def infer_stop():
                 "env_state_dim": 0,
                 "action_dim": 0,
                 "chunk_size": 0,
+                "chunk_buffer": [],
+                "chunk_index": 0,
+                "current_chunk": None,
             }
         )
     return jsonify({"status": "stopped"})

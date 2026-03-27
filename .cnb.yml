@@ -1,0 +1,24 @@
+# .cnb.yml
+main:
+  push:
+    - imports: https://cnb.cool/tmacychen/sec/-/blob/main/envs.yml
+      stages:
+        - name: sync to github
+          image: tencentcom/git-sync
+          settings:
+            target_url: https://github.com/tmacychen/AKA-Sim.git
+            auth_type: https
+            username: $GIT_USERNAME
+            password: $GIT_ACCESS_TOKEN
+
+$:
+  push:
+    - imports: https://cnb.cool/tmacychen/sec/-/blob/main/envs.yml
+      stages:
+        - name: sync to github
+          image: tencentcom/git-sync
+          settings:
+            target_url: https://github.com/tmacychen/AKA-Sim.git
+            auth_type: https
+            username: $GIT_USERNAME
+            password: $GIT_ACCESS_TOKEN

@@ -1,0 +1,13 @@
+__pycache__/
+.git/
+.idea/
+node_modules/
+static/
+output/
+checkpoints/
+*.pyc
+*.pyo
+.env
+.DS_Store
+.codebuddy/
+.github/

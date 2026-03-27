@@ -53,7 +53,7 @@ const ControlButton = ({
             onPointerUp={handlePressEnd}
             onPointerLeave={handlePressEnd}
             onClick={(e) => {
-                e.preventDefault();
+                e.preventDefault(); // 防止默认行为（如表单提交）
                 onClick?.();
             }}
             style={{
@@ -66,7 +66,7 @@ const ControlButton = ({
                 fontSize: "16px",
                 transition: "all 0.15s ease",
                 boxShadow: isPressed
-                    ? "0 3px 8px rgba(0,0,0,0.4)"
+                    ? "0 3px 8px rgba(0,0,0,0.4)"   // 按下时阴影变浅/变小
                     : "0 6px 15px rgba(0,0,0,0.5)",
                 transform: isPressed ? "scale(0.96)" : "scale(1)",
                 touchAction: "none",
@@ -77,4 +77,4 @@ const ControlButton = ({
     )
 }
 
-export default ControlButton;
+export default ControlButton

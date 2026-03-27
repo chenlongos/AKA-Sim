@@ -3,3 +3,9 @@ __pycache__/
 static
 output/
 checkpoints/
+node_modules/
+
+# Frontend build artifacts (auto-generated)
+static-3d/assets/*.js
+static-3d/assets/*.css
+static-3d/index.html

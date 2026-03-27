@@ -57,17 +57,28 @@ def _load_act_model():
     if _act_model is not None:
         return
     _act_device = "cuda" if torch.cuda.is_available() else "cpu"
-    state_dim = int(os.getenv("ACT_STATE_DIM", "14"))
-    env_state_dim = int(os.getenv("ACT_ENV_STATE_DIM", "6"))
-    action_dim = int(os.getenv("ACT_ACTION_DIM", "7"))
-    chunk_size = int(os.getenv("ACT_CHUNK_SIZE", "16"))
     checkpoint_path = os.getenv(
         "ACT_CHECKPOINT_PATH",
         os.path.join("output", "train", "act_demo", "act_checkpoint.pt"),
     )
+    # Try to load dimensions from checkpoint first
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=_act_device)
+        state_dim = int(checkpoint.get("state_dim", 14))
+        env_state_dim = int(checkpoint.get("env_state_dim", 10))
+        action_dim = int(checkpoint.get("action_dim", 2))
+        chunk_size = int(checkpoint.get("chunk_size", 10))
+        use_vae = bool(checkpoint.get("use_vae", False))
+    except Exception:
+        # Fallback to env vars
+        state_dim = int(os.getenv("ACT_STATE_DIM", "14"))
+        env_state_dim = int(os.getenv("ACT_ENV_STATE_DIM", "10"))
+        action_dim = int(os.getenv("ACT_ACTION_DIM", "2"))
+        chunk_size = int(os.getenv("ACT_CHUNK_SIZE", "10"))
+        use_vae = False
     config = ACTConfig(
         chunk_size=chunk_size,
-        use_vae=False,
+        use_vae=use_vae,
         input_features={
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
             OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(env_state_dim,)),

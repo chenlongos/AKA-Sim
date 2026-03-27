@@ -6,18 +6,15 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: '/sim3d/',
-    plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
+    base: '/',
+    plugins: [react()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
-      port: 5173,
+      port: 5174,
       host: '0.0.0.0',
       proxy: {
         "/api": {
@@ -32,8 +29,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: path.resolve(__dirname, '../static-3d'),
+      outDir: path.resolve(__dirname, '../static'),
       emptyOutDir: true,
+      rollupOptions: {
+        input: path.resolve(__dirname, 'control.html'),
+      },
     },
   };
 });
