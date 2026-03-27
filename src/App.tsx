@@ -7,6 +7,7 @@ import { CloudModel, CloudDataset, CloudTrainingStatus, SimulationState, RobotCo
 import { createScene, createCamera, createRenderer, createLights, createFloor } from './sim/scene';
 import { createRobot } from './sim/robot';
 import { updateEnvironment } from './sim/environment';
+import { createBucket } from './sim/objects';
 import { tr } from 'motion/react-client';
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
     const [sceneSize, setSceneSize] = useState(() => localStorage.getItem('sceneSize') || 'medium');
     const [sceneComplexity, setSceneComplexity] = useState(() => localStorage.getItem('sceneComplexity') || 'low');
     const [hasArm, setHasArm] = useState(() => localStorage.getItem('hasArm') === 'true');
+    const [showBucket, setShowBucket] = useState(false);
     const [lightPos, setLightPos] = useState(() => {
         const saved = localStorage.getItem('lightPos');
         return saved ? JSON.parse(saved) : { x: 10, y: 20, z: 10 };
@@ -48,10 +50,11 @@ export default function App() {
         localStorage.setItem('sceneSize', sceneSize);
         localStorage.setItem('sceneComplexity', sceneComplexity);
         localStorage.setItem('hasArm', hasArm.toString());
+        localStorage.setItem('showBucket', showBucket.toString());
         localStorage.setItem('lightPos', JSON.stringify(lightPos));
         localStorage.setItem('speed', speed.toString());
         localStorage.setItem('turnSpeed', turnSpeed.toString());
-    }, [sceneType, sceneSize, sceneComplexity, hasArm, lightPos, speed, turnSpeed]);
+    }, [sceneType, sceneSize, sceneComplexity, hasArm, showBucket, lightPos, speed, turnSpeed]);
 
     // Cloud Training State
     const [trainingMode, setTrainingMode] = useState<'frontend' | 'cloud'>('frontend');
@@ -98,6 +101,7 @@ export default function App() {
         inferenceTimeoutId: 0 as unknown as ReturnType<typeof setTimeout>,
         model: null as tf.LayersModel | null,
         recordingIntervalId: null as unknown as ReturnType<typeof setInterval>,
+        bucket: null as THREE.Mesh | null,
         lastX: 0,
         lastZ: 0,
         stuckCounter: 0,
@@ -461,13 +465,43 @@ export default function App() {
         const ball = new THREE.Mesh(ballGeo, ballMat);
         ball.position.set(0, 0.25, -5);
         ball.castShadow = true;
-        ball.userData = { w: 0.5, d: 0.5 };
+        ball.userData = { w: 0.5, d: 0.5, isBall: true, isGrabbed: false };
         group.add(ball);
         sim.current.walls.push(ball);
         sim.current.target = ball; // Use ball as the target since red cube is removed
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
     }, [sceneType, sceneSize, sceneComplexity, addLog]);
+
+    // Add/Remove bucket
+    useEffect(() => {
+        if (!sim.current.scene) return;
+
+        const scene = sim.current.scene;
+
+        if (showBucket && !sim.current.bucket) {
+            // Create bucket at position (5, 0, 5)
+            const bucket = createBucket(0xff0000, new THREE.Vector3(5, 0, 5));
+            bucket.position.set(5, 0, 5); // Ensure the bucket mesh position is set correctly
+            bucket.name = 'bucket';
+            // Add collision data (bucket diameter is ~1.2m)
+            bucket.userData = { w: 1.2, d: 1.2, isBucket: true, isGrabbed: false };
+            scene.add(bucket);
+            sim.current.bucket = bucket;
+            sim.current.walls.push(bucket); // Add to collision detection array
+            addLog('Red bucket added to scene at (5, 0, 5) with collision enabled', 'info');
+        } else if (!showBucket && sim.current.bucket) {
+            // Remove bucket from collision array first
+            const bucketIndex = sim.current.walls.indexOf(sim.current.bucket);
+            if (bucketIndex > -1) {
+                sim.current.walls.splice(bucketIndex, 1);
+            }
+            // Remove bucket from scene
+            scene.remove(sim.current.bucket);
+            sim.current.bucket = null;
+            addLog('Red bucket removed from scene', 'info');
+        }
+    }, [showBucket, addLog]);
 
     const [enableCollisionProtection, setEnableCollisionProtection] = useState(() => {
         const saved = localStorage.getItem('enableCollisionProtection');
@@ -674,14 +708,15 @@ export default function App() {
         };
 
         sim.current.walls.forEach(wall => {
+            // Skip grabbed objects from collision detection
+            if (wall.userData && wall.userData.isGrabbed) {
+                return;
+            }
+            
             if (checkAABB(wall.position.x, wall.position.z, wall.userData.w, wall.userData.d)) {
                 collided = true;
             }
         });
-
-        if (sim.current.target && checkAABB(sim.current.target.position.x, sim.current.target.position.z, sim.current.target.userData.w, sim.current.target.userData.d)) {
-            collided = true;
-        }
 
         sim.current.isColliding = collided; // Expose collision state
 
@@ -837,6 +872,7 @@ export default function App() {
                 if (arm.grabbedObject) {
                     arm.gripper.add(arm.grabbedObject);
                     arm.grabbedObject.position.set(0, 0.35, 0);
+                    arm.grabbedObject.userData.isGrabbed = true; // Mark object as grabbed
                 }
                 arm.state = 'picking_up';
                 arm.targetRotations = { lowerArm: -Math.PI/6, elbow: Math.PI/1.5, wrist: -Math.PI/4 };
@@ -847,6 +883,7 @@ export default function App() {
                 if (arm.grabbedObject) {
                     const worldPos = new THREE.Vector3();
                     arm.grabbedObject.getWorldPosition(worldPos);
+                    arm.grabbedObject.userData.isGrabbed = false; // Mark object as released
                     sim.current.environmentGroup!.add(arm.grabbedObject);
                     arm.grabbedObject.position.copy(worldPos);
                     // Drop to ground level
@@ -1905,6 +1942,15 @@ export default function App() {
                                             <option value="high">高复杂度</option>
                                         </select>
                                     </div>
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-400">
+                                        <input
+                                            type="checkbox"
+                                            checked={showBucket}
+                                            onChange={(e) => setShowBucket(e.target.checked)}
+                                            className="w-4 h-4 rounded bg-slate-800 border-slate-700 accent-red-500"
+                                        />
+                                        <span>显示红桶</span>
+                                    </label>
                                 </div>
                             </div>
 

@@ -4,7 +4,7 @@ import { CloudDataset, CloudModel, CloudTrainingStatus } from '../types';
 interface SidebarLeftProps {
     trainingMode: 'frontend' | 'cloud';
     setTrainingMode: (mode: 'frontend' | 'cloud') => void;
-    
+
     // Cloud Props
     cloudDatasets: CloudDataset[];
     selectedCloudDataset: string;
@@ -23,6 +23,8 @@ interface SidebarLeftProps {
     setSceneSize: (size: string) => void;
     sceneComplexity: string;
     setSceneComplexity: (complexity: string) => void;
+    showBucket: boolean;
+    setShowBucket: (show: boolean) => void;
 
     // Robot Props
     robotConfig: string[];
@@ -66,6 +68,7 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
     cloudDatasets, selectedCloudDataset, setSelectedCloudDataset, fetchCloudDatasets,
     cloudModels, selectedCloudModel, setSelectedCloudModel, fetchCloudModels, cloudTrainingStatus,
     sceneType, setSceneType, sceneSize, setSceneSize, sceneComplexity, setSceneComplexity,
+    showBucket, setShowBucket,
     robotConfig, setRobotConfig, lightPos, setLightPos, resetRobot,
     speed, setSpeed, turnSpeed, setTurnSpeed, simRef, sendCommand,
     isRecording, toggleRecording, episodesCount, frameCount, actionCount, saveDataset,
@@ -166,6 +169,15 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                             </select>
                         </div>
                     </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800">
+                        <input
+                            type="checkbox"
+                            checked={showBucket}
+                            onChange={(e) => setShowBucket(e.target.checked)}
+                            className="accent-red-500 rounded bg-slate-800 border-slate-700"
+                        />
+                        <span>显示红桶</span>
+                    </label>
                 </div>
 
                 <div className="space-y-3">
