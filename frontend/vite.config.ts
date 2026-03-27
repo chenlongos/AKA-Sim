@@ -6,7 +6,7 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: '/',
+    base: '/sim3d/',
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: path.resolve(__dirname, '../static'),
+      outDir: path.resolve(__dirname, '../static-3d'),
       emptyOutDir: true,
     },
   };

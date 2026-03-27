@@ -1,5 +1,0 @@
-{
-  "name": "LeRobot ACT Simulator",
-  "description": "A 3D simulator for teaching LeRobot ACT model training with data collection and inference.",
-  "requestFramePermissions": []
-}

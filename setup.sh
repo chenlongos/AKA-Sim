@@ -97,19 +97,18 @@ do_start() {
     docker run -d --name "${CONTAINER_NAME}" \
       ${PORT_FLAG} \
       -v "$(pwd)":/app \
-      -v /app/frontend/node_modules \
       -e PYTHONPATH=/app/backend \
       -w /app \
       "${TAG_NAME}"
 
     ok "容器已启动"
 
-    # 构建前端
-    info "构建前端静态资源..."
-    if docker exec "${CONTAINER_NAME}" bash -c "cd /app/frontend && npm run build"; then
+    # 安装前端依赖并构建
+    info "安装前端依赖并构建..."
+    if docker exec "${CONTAINER_NAME}" bash -c "cd /app/frontend && npm install && npm run build"; then
         ok "前端构建成功"
     else
-        warn "前端构建失败，尝试跳过（可能已有缓存构建）..."
+        warn "前端构建失败，请检查: docker logs ${CONTAINER_NAME}"
     fi
 
     # 等待服务就绪
