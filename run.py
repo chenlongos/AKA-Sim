@@ -1,8 +1,10 @@
 import os
 import threading
+import signal
+import time
 
-from app import create_app
-from app.extensions import socketio
+from backend.app import create_app
+from backend.app.extensions import socketio
 
 app = create_app()
 
@@ -20,6 +22,25 @@ def run_https():
     port = int(os.getenv("APP_HTTPS_PORT", str(default_port)))
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True, ssl_context=(cert_path, key_path))
 
+shutdown_event = threading.Event()
+
+def signal_handler(_sig, _frame):
+    print("Shutting down ...")
+    shutdown_event.set()
+    os._exit(0)
+
 if __name__ == '__main__':
-    threading.Thread(target=run_http).start()
-    threading.Thread(target=run_https).start()
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    http_thread = threading.Thread(target=run_http, daemon=True)
+    https_thread = threading.Thread(target=run_https, daemon=True)
+
+    http_thread.start()
+    https_thread.start()
+
+    try:
+        while not shutdown_event.is_set():
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        signal_handler(None, None)
