@@ -3,15 +3,17 @@ import json
 import time
 from datetime import datetime
 from typing import Callable
+from collections.abc import Sequence
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 
 from backend.policies.act.configuration_act import ACTConfig
 from backend.policies.act.modeling_act import ACT
-from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION
+from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION, OBS_IMAGES
+from backend.utils.image_utils import load_image_tensor
 from backend.configs.types import PolicyFeature, FeatureType
 
-import torch
 import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
@@ -24,22 +26,74 @@ class ACTDataset(Dataset):
         env_states: torch.Tensor,
         actions: torch.Tensor,
         action_is_pad: torch.Tensor,
+        images: list[list[str]] | None = None,
+        image_root: str | None = None,
+        image_size: tuple[int, int] = (224, 224),
     ):
         self.states = states
         self.env_states = env_states
         self.actions = actions
         self.action_is_pad = action_is_pad
+        self.images = images
+        self.image_root = image_root
+        self.image_size = (int(image_size[0]), int(image_size[1]))
+        self.num_cameras = len(images[0]) if images else 0
+        self.has_images = bool(images and self.num_cameras > 0)
 
     def __len__(self):
         return self.states.shape[0]
 
     def __getitem__(self, idx):
-        return {
+        item = {
             OBS_STATE: self.states[idx],
             OBS_ENV_STATE: self.env_states[idx],
             ACTION: self.actions[idx],
             "action_is_pad": self.action_is_pad[idx],
         }
+        if self.has_images and self.images is not None:
+            camera_refs = list(self.images[idx])[: self.num_cameras]
+            if len(camera_refs) < self.num_cameras:
+                camera_refs.extend([""] * (self.num_cameras - len(camera_refs)))
+            item[OBS_IMAGES] = [
+                load_image_tensor(
+                    image_ref,
+                    image_root=self.image_root,
+                    image_size=self.image_size,
+                )
+                for image_ref in camera_refs
+            ]
+        return item
+
+
+def collate_act_batch(batch: list[dict]) -> dict:
+    if not batch:
+        raise ValueError("batch is empty")
+    collated = {
+        OBS_STATE: torch.stack([item[OBS_STATE] for item in batch], dim=0),
+        OBS_ENV_STATE: torch.stack([item[OBS_ENV_STATE] for item in batch], dim=0),
+        ACTION: torch.stack([item[ACTION] for item in batch], dim=0),
+        "action_is_pad": torch.stack([item["action_is_pad"] for item in batch], dim=0),
+    }
+    if OBS_IMAGES in batch[0]:
+        num_cameras = len(batch[0][OBS_IMAGES])
+        collated[OBS_IMAGES] = [
+            torch.stack([item[OBS_IMAGES][camera_index] for item in batch], dim=0)
+            for camera_index in range(num_cameras)
+        ]
+    return collated
+
+
+def _build_image_feature_config(
+    num_cameras: int,
+    image_size: tuple[int, int],
+) -> dict[str, PolicyFeature]:
+    if num_cameras <= 0:
+        return {}
+    width, height = int(image_size[0]), int(image_size[1])
+    return {
+        f"{OBS_IMAGES}.cam_{camera_index}": PolicyFeature(type=FeatureType.VISUAL, shape=(3, height, width))
+        for camera_index in range(num_cameras)
+    }
 
 def train_act(
     model: ACT,
@@ -87,6 +141,8 @@ def train_act(
             for k, v in batch.items():
                 if torch.is_tensor(v):
                     batch[k] = v.to(device)
+                elif isinstance(v, list):
+                    batch[k] = [item.to(device) if torch.is_tensor(item) else item for item in v]
             data_s = time.perf_counter() - data_start
 
             # ===== Forward =====
@@ -174,16 +230,28 @@ def train_act(
         print("✅ ACT training finished")
 
 
-def build_config(state_dim: int, env_state_dim: int, action_dim: int, chunk_size: int, use_vae: bool):
+def build_config(
+    state_dim: int,
+    env_state_dim: int,
+    action_dim: int,
+    chunk_size: int,
+    use_vae: bool,
+    *,
+    num_cameras: int = 0,
+    image_size: tuple[int, int] = (224, 224),
+):
+    input_features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
+        OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(env_state_dim,)),
+    }
+    input_features.update(_build_image_feature_config(num_cameras, image_size))
     return ACTConfig(
         chunk_size=chunk_size,
         n_action_steps=chunk_size,
         n_obs_steps=1,
         use_vae=use_vae,
-        input_features={
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
-            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(env_state_dim,)),
-        },
+        pretrained_backbone_weights=None,
+        input_features=input_features,
         output_features={
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
         },
@@ -211,7 +279,17 @@ def train_from_dataset(
     env_state_dim = int(train_dataset.env_states.shape[-1])
     action_dim = int(train_dataset.actions.shape[-1])
     chunk_size = int(train_dataset.actions.shape[-2])
-    config = build_config(state_dim, env_state_dim, action_dim, chunk_size, use_vae)
+    num_cameras = int(train_dataset.num_cameras)
+    image_size = tuple(train_dataset.image_size)
+    config = build_config(
+        state_dim,
+        env_state_dim,
+        action_dim,
+        chunk_size,
+        use_vae,
+        num_cameras=num_cameras,
+        image_size=image_size,
+    )
     model = ACT(config)
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -219,6 +297,7 @@ def train_from_dataset(
         shuffle=True,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
+        collate_fn=collate_act_batch,
     )
     train_act(
         model=model,
@@ -241,6 +320,9 @@ def train_from_dataset(
             "action_dim": action_dim,
             "chunk_size": chunk_size,
             "use_vae": use_vae,
+            "has_images": bool(train_dataset.has_images),
+            "num_cameras": num_cameras,
+            "image_size": list(image_size),
         }
     )
     torch.save(checkpoint, checkpoint_path)
@@ -253,6 +335,22 @@ def run_inference(model: ACT, batch: dict, device: str):
         actions_pred, _ = model(batch)
     print(f"inference output shape: {tuple(actions_pred.shape)}")
     print(f"inference sample: {actions_pred[0, 0, :5].tolist()}")
+
+
+def _extract_observation_images(raw_images: Sequence | None) -> list[list[str]] | None:
+    if not isinstance(raw_images, Sequence):
+        return None
+    extracted: list[list[str]] = []
+    for chunk in raw_images:
+        if not isinstance(chunk, Sequence) or len(chunk) == 0:
+            extracted.append([])
+            continue
+        first_step = chunk[0]
+        if not isinstance(first_step, Sequence):
+            extracted.append([])
+            continue
+        extracted.append([str(item) if item is not None else "" for item in first_step])
+    return extracted
 
 
 def load_dataset_from_local(data_path: str):
@@ -289,18 +387,41 @@ def load_dataset_from_local(data_path: str):
                 action_is_pad = torch.as_tensor(get_column("action_is_pad"), dtype=torch.bool)
             except KeyError:
                 action_is_pad = torch.zeros(actions.shape[0], actions.shape[1], dtype=torch.bool)
+            try:
+                raw_images = get_column(OBS_IMAGES)
+            except KeyError:
+                raw_images = None
+            images = _extract_observation_images(raw_images)
             return ACTDataset(
                 states=states,
                 env_states=env_states,
                 actions=actions,
                 action_is_pad=action_is_pad,
+                images=images,
+                image_root=data_path,
             )
         payload = torch.load(data_path, map_location="cpu")
+        raw_images = payload.get(OBS_IMAGES)
+        images = _extract_observation_images(raw_images)
+        image_size = (224, 224)
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            raw_size = meta.get("image_size")
+            if (
+                isinstance(raw_size, Sequence)
+                and len(raw_size) >= 2
+                and raw_size[0] is not None
+                and raw_size[1] is not None
+            ):
+                image_size = (int(raw_size[0]), int(raw_size[1]))
         return ACTDataset(
             states=payload[OBS_STATE],
             env_states=payload[OBS_ENV_STATE],
             actions=payload[ACTION],
             action_is_pad=payload["action_is_pad"],
+            images=images,
+            image_root=os.path.dirname(data_path),
+            image_size=image_size,
         )
     return None
 
@@ -355,6 +476,7 @@ def train():
         shuffle=True,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
+        collate_fn=collate_act_batch,
     )
 
     train_act(
@@ -372,6 +494,8 @@ def train():
     for k, v in sample.items():
         if torch.is_tensor(v):
             sample[k] = v.to(device)
+        elif isinstance(v, list):
+            sample[k] = [item.to(device) if torch.is_tensor(item) else item for item in v]
     run_inference(model, sample, device)
     checkpoint_path = os.path.join(output_dir, "act_checkpoint.pt")
     loaded_model = load_model_from_checkpoint(config, checkpoint_path, device)

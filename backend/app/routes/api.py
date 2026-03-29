@@ -17,7 +17,9 @@ import time
 import torch
 
 from flask import Blueprint, request, jsonify
+from backend.transfer import episodes_from_payload, episodes_to_act_payload
 from backend.utils.constants import OBS_STATE, OBS_ENV_STATE, ACTION, OBS_IMAGE, OBS_IMAGES, REWARD, DONE, TRUNCATED, OBS_LANGUAGE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ROBOTS, TELEOPERATORS
+from backend.utils.image_utils import build_infer_image_tensors, normalize_infer_images
 from backend.sim.model.car import car
 from backend.train import train_from_dataset, build_config
 from backend.policies.act.modeling_act import ACT
@@ -59,12 +61,13 @@ infer_state = {
     "env_state_dim": 0,
     "action_dim": 0,
     "chunk_size": 0,
+    "has_images": False,
+    "num_cameras": 0,
+    "image_size": (224, 224),
 }
 
 
-@api_bp.route('/dataset', methods=['POST'])
-def save_dataset():
-    payload = request.get_json(silent=True) or {}
+def _save_dataset_payload(payload: dict):
     states = payload.get("states") or payload.get(OBS_STATE)
     env_states = payload.get("env_states") or payload.get(OBS_ENV_STATE)
     actions = payload.get("actions") or payload.get(ACTION)
@@ -87,26 +90,26 @@ def save_dataset():
         if legacy_images is not None:
             images = [[[(img if img is not None else "")] for img in chunk] for chunk in legacy_images]
     if not (isinstance(states, list) and isinstance(env_states, list) and isinstance(actions, list) and isinstance(action_is_pad, list)):
-        return jsonify({"error": "invalid payload"}), 400
+        return {"error": "invalid payload"}, 400
     if not (len(states) == len(env_states) == len(actions) == len(action_is_pad)):
-        return jsonify({"error": "length mismatch"}), 400
+        return {"error": "length mismatch"}, 400
     if rewards is not None and (not isinstance(rewards, list) or len(rewards) != len(actions)):
-        return jsonify({"error": "reward length mismatch"}), 400
+        return {"error": "reward length mismatch"}, 400
     if dones is not None and (not isinstance(dones, list) or len(dones) != len(actions)):
-        return jsonify({"error": "done length mismatch"}), 400
+        return {"error": "done length mismatch"}, 400
     if truncateds is not None and (not isinstance(truncateds, list) or len(truncateds) != len(actions)):
-        return jsonify({"error": "truncated length mismatch"}), 400
+        return {"error": "truncated length mismatch"}, 400
     if languages is not None and (not isinstance(languages, list) or len(languages) != len(actions)):
-        return jsonify({"error": "language length mismatch"}), 400
+        return {"error": "language length mismatch"}, 400
     if language_tokens is not None and (not isinstance(language_tokens, list) or len(language_tokens) != len(actions)):
-        return jsonify({"error": "language tokens length mismatch"}), 400
+        return {"error": "language tokens length mismatch"}, 400
     if language_masks is not None and (not isinstance(language_masks, list) or len(language_masks) != len(actions)):
-        return jsonify({"error": "language masks length mismatch"}), 400
+        return {"error": "language masks length mismatch"}, 400
     if images is not None:
         if not isinstance(images, list):
-            return jsonify({"error": "invalid images"}), 400
+            return {"error": "invalid images"}, 400
         if len(images) != len(actions):
-            return jsonify({"error": "images length mismatch"}), 400
+            return {"error": "images length mismatch"}, 400
     dataset = {
         OBS_STATE: torch.tensor(states, dtype=torch.float32),
         OBS_ENV_STATE: torch.tensor(env_states, dtype=torch.float32),
@@ -182,7 +185,48 @@ def save_dataset():
         path = os.path.join(save_dir, f"act_dataset_{timestamp}_{suffix}.pt")
         suffix += 1
     torch.save(dataset, path)
-    return jsonify({"status": "success", "path": path})
+    response = {"status": "success", "path": path}
+    if isinstance(payload.get("meta"), dict):
+        response["meta"] = payload["meta"]
+    return response, 200
+
+
+@api_bp.route('/dataset', methods=['POST'])
+def save_dataset():
+    payload = request.get_json(silent=True) or {}
+    body, status = _save_dataset_payload(payload)
+    return jsonify(body), status
+
+
+@api_bp.route("/transfer/dataset", methods=["POST"])
+def save_transfer_dataset():
+    payload = request.get_json(silent=True) or {}
+    try:
+        episodes = episodes_from_payload(payload.get("episodes"))
+        raw_chunk_size = payload.get("chunk_size", 10)
+        raw_min_steps = payload.get("min_steps_per_episode", 1)
+        chunk_size = max(1, int(raw_chunk_size))
+        min_steps = max(1, int(raw_min_steps))
+        include_images = bool(payload.get("include_images", True))
+        action_labels = payload.get("action_labels")
+        if action_labels is not None and not isinstance(action_labels, list):
+            return jsonify({"error": "action_labels must be a list"}), 400
+        act_payload = episodes_to_act_payload(
+            episodes,
+            chunk_size=chunk_size,
+            action_labels=[str(item) for item in action_labels] if isinstance(action_labels, list) else None,
+            min_steps_per_episode=min_steps,
+            include_images=include_images,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    response, status = _save_dataset_payload(act_payload)
+    if status >= 400:
+        return jsonify(response), status
+    response["chunk_count"] = len(act_payload.get(ACTION, []))
+    response["transfer_schema"] = "aka_sim.transfer_episode.v1"
+    return jsonify(response), status
 
 
 def _latest_dataset_path():
@@ -481,6 +525,9 @@ def delete_model(model_id: str):
                     "env_state_dim": 0,
                     "action_dim": 0,
                     "chunk_size": 0,
+                    "has_images": False,
+                    "num_cameras": 0,
+                    "image_size": (224, 224),
                 }
             )
     shutil.rmtree(model_dir)
@@ -504,7 +551,19 @@ def infer_start():
         action_dim = int(checkpoint["action_dim"])
         chunk_size = int(checkpoint["chunk_size"])
         use_vae = bool(checkpoint.get("use_vae", False))
-        config = build_config(state_dim, env_state_dim, action_dim, chunk_size, use_vae)
+        has_images = bool(checkpoint.get("has_images", False))
+        num_cameras = int(checkpoint.get("num_cameras", 0)) if has_images else 0
+        raw_image_size = checkpoint.get("image_size") or [224, 224]
+        image_size = (int(raw_image_size[0]), int(raw_image_size[1]))
+        config = build_config(
+            state_dim,
+            env_state_dim,
+            action_dim,
+            chunk_size,
+            use_vae,
+            num_cameras=num_cameras,
+            image_size=image_size,
+        )
         model = ACT(config)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.to(device)
@@ -523,9 +582,20 @@ def infer_start():
                 "env_state_dim": env_state_dim,
                 "action_dim": action_dim,
                 "chunk_size": chunk_size,
+                "has_images": has_images,
+                "num_cameras": num_cameras,
+                "image_size": image_size,
             }
         )
-    return jsonify({"status": "started", "model_id": infer_state["model_id"]})
+    return jsonify(
+        {
+            "status": "started",
+            "model_id": infer_state["model_id"],
+            "has_images": has_images,
+            "num_cameras": num_cameras,
+            "image_size": list(image_size),
+        }
+    )
 
 
 @api_bp.route("/infer/step", methods=["POST"])
@@ -538,6 +608,9 @@ def infer_step():
         state_dim = infer_state["state_dim"]
         env_state_dim = infer_state["env_state_dim"]
         action_dim = infer_state["action_dim"]
+        has_images = bool(infer_state["has_images"])
+        num_cameras = int(infer_state["num_cameras"])
+        image_size = tuple(infer_state["image_size"])
 
     def _to_fixed_vec(raw, dim: int):
         vec = [0.0] * dim
@@ -553,6 +626,17 @@ def infer_step():
     data = request.get_json(silent=True) or {}
     state_input = data.get("state")
     env_input = data.get("env_state")
+    obs_payload = data.get("observation") if isinstance(data.get("observation"), dict) else None
+    if obs_payload is not None:
+        state_input = obs_payload.get("state", state_input)
+        env_input = obs_payload.get("environment_state", env_input)
+    images_input = data.get("images")
+    if images_input is None and obs_payload is not None:
+        images_input = obs_payload.get("images")
+    if images_input is None:
+        images_input = data.get(OBS_IMAGES)
+    if images_input is None:
+        images_input = data.get(OBS_IMAGE)
 
     if state_input is None or env_input is None:
         state = car.get_state()
@@ -567,8 +651,18 @@ def infer_step():
 
     state_tensor = torch.tensor([state_vec], dtype=torch.float32, device=device)
     env_tensor = torch.tensor([env_vec], dtype=torch.float32, device=device)
+    batch = {OBS_STATE: state_tensor, OBS_ENV_STATE: env_tensor}
+    if has_images:
+        batch[OBS_IMAGES] = [
+            image_tensor.to(device)
+            for image_tensor in build_infer_image_tensors(
+                normalize_infer_images(images_input),
+                num_cameras=num_cameras,
+                image_size=image_size,
+            )
+        ]
     with torch.no_grad():
-        actions, _ = model({OBS_STATE: state_tensor, OBS_ENV_STATE: env_tensor})
+        actions, _ = model(batch)
     action_vec = actions[0, 0].detach().cpu().numpy().tolist()
     action = _map_action(action_vec, action_dim)
     _apply_action(action)
@@ -589,6 +683,9 @@ def infer_stop():
                 "env_state_dim": 0,
                 "action_dim": 0,
                 "chunk_size": 0,
+                "has_images": False,
+                "num_cameras": 0,
+                "image_size": (224, 224),
             }
         )
     return jsonify({"status": "stopped"})

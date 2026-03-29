@@ -81,6 +81,107 @@ POST /api/dataset
 
 ---
 
+#### 2.1 保存 RealToReal / SimToReal 数据集
+
+```
+POST /api/transfer/dataset
+```
+
+这个接口面向“有真实小车”的用户。它接收统一的 episode 结构，然后由服务端自动切 chunk、补 pad，并转换为现有 ACT 训练链路可直接使用的 `.pt` 数据集。
+
+**请求体**:
+```json
+{
+  "chunk_size": 10,
+  "min_steps_per_episode": 1,
+  "include_images": true,
+  "action_labels": ["up", "down", "left", "right", "stop"],
+  "episodes": [
+    {
+      "episode_id": "real_ep_001",
+      "source_domain": "real",
+      "transfer_mode": "real_to_real",
+      "robot_id": "car_01",
+      "teleoperator_id": "operator_a",
+      "steps": [
+        {
+          "observation": {
+            "state": [0.1, 0.2, 0.0, 0.3],
+            "environment_state": [0.0, 1.0, 0.0, 0.0],
+            "cameras": [
+              {
+                "camera_id": "front",
+                "data_url": "data:image/jpeg;base64,..."
+              }
+            ]
+          },
+          "action": {
+            "command": "up"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+**字段说明**:
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `chunk_size` | number | 否 | ACT 切块长度，默认 `10` |
+| `min_steps_per_episode` | number | 否 | 小于该步数的 episode 会被跳过 |
+| `include_images` | boolean | 否 | 是否保存摄像头图像 |
+| `action_labels` | string[] | 否 | 离散动作标签，用于把 `command` 转为 one-hot |
+| `episodes` | object[] | 是 | 统一 episode 数据 |
+
+**episode 字段**:
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `episode_id` | string | 否 | 回合 ID |
+| `source_domain` | string | 否 | `real` 或 `sim` |
+| `transfer_mode` | string | 否 | `real_to_real` 或 `sim_to_real` |
+| `robot_id` | string | 否 | 小车 ID |
+| `teleoperator_id` | string | 否 | 操作者 ID |
+| `steps` | object[] | 是 | 轨迹步骤列表 |
+
+**step 字段**:
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `observation.state` | number[] | 是 | 状态向量 |
+| `observation.environment_state` | number[] | 是 | 环境状态向量 |
+| `observation.cameras` | object[] | 否 | 摄像头帧，支持 `data_url` |
+| `action.command` | string | 否 | 离散动作，例如 `up` |
+| `action.vector` | number[] | 否 | 直接提供动作向量，优先级高于 `command` |
+| `action.throttle` | number | 否 | 连续油门，会被离散化 |
+| `action.steering` | number | 否 | 连续转向，会被离散化 |
+
+**响应示例**:
+```json
+{
+  "status": "success",
+  "path": "/path/to/save/act_dataset_20260321_101010.pt",
+  "chunk_count": 24,
+  "transfer_schema": "aka_sim.transfer_episode.v1",
+  "meta": {
+    "schema": "aka_sim.transfer_episode.v1",
+    "action_labels": ["up", "down", "left", "right", "stop"],
+    "transfer_modes": {
+      "real_to_real": 4,
+      "sim_to_real": 2
+    },
+    "source_domains": {
+      "real": 4,
+      "sim": 2
+    }
+  }
+}
+```
+
+---
+
 #### 3. 删除数据集
 
 ```
@@ -226,7 +327,10 @@ POST /api/infer/start
 ```json
 {
   "status": "started",
-  "model_id": "act_20240315_143022"
+  "model_id": "act_20240315_143022",
+  "has_images": true,
+  "num_cameras": 1,
+  "image_size": [224, 224]
 }
 ```
 
@@ -242,7 +346,8 @@ POST /api/infer/step
 ```json
 {
   "state": [0.1, 0.2, 0.5, 0.0, 1.0],
-  "env_state": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  "env_state": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "images": ["data:image/png;base64,..."]
 }
 ```
 
@@ -250,6 +355,7 @@ POST /api/infer/step
 |------|------|------|------|
 | `state` | number[] | 否 | 小车状态 (默认使用当前状态) |
 | `env_state` | number[] | 否 | 环境状态 (默认全零) |
+| `images` | string[] | 否 | 当前观测图像列表，视觉模型建议提供 |
 
 **响应示例**:
 ```json
@@ -266,6 +372,12 @@ POST /api/infer/step
 - `left`: 左转
 - `right`: 右转
 - `stop`: 停止
+
+说明：
+
+- 如果模型训练时带视觉输入，推理时应同步传入 `images`
+- 当前服务端会把图像统一 resize 到 checkpoint 中记录的 `image_size`
+- 如果视觉模型推理时未提供图像，服务端会使用黑图占位，接口不会报错，但效果通常会下降
 
 ---
 
