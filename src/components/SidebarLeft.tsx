@@ -1,4 +1,5 @@
 import React from 'react';
+import { Loader2 } from 'lucide-react';
 import { CloudDataset, CloudModel, CloudTrainingStatus } from '../types';
 
 interface SidebarLeftProps {
@@ -319,7 +320,14 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                         disabled={trainingMode === 'cloud' ? !selectedCloudDataset : (episodesCount === 0 || isTraining)} 
                         className={`w-full ${trainingMode === 'cloud' ? 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500' : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500'} text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50`}
                     >
-                        {trainingMode === 'cloud' ? '开始云端训练' : '开始训练模型'}
+                        {isTraining ? (
+                            <span className="flex items-center justify-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                正在训练模型
+                            </span>
+                        ) : (
+                            trainingMode === 'cloud' ? '开始云端训练' : '开始训练模型'
+                        )}
                     </button>
                     {isTraining && (
                         <div className="space-y-2">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import * as tf from '@tensorflow/tfjs';
+import { Loader2 } from 'lucide-react';
 import { cloudService } from './services/cloudService';
 import { actService } from './services/actService';
 import { CloudModel, CloudDataset, CloudTrainingStatus, SimulationState, RobotConfig, SceneType, SceneSize, SceneComplexity, LogEntry } from './types';
@@ -342,13 +343,34 @@ export default function App() {
         const group = sim.current.environmentGroup;
         const plane = sim.current.plane;
 
+        // 如果机械臂正在抓取对象，先释放并销毁旧对象，防止场景中出现多余的对象
+        if (sim.current.arm?.grabbedObject) {
+            const grabbed = sim.current.arm.grabbedObject;
+            // 从夹爪中移除（Three.js 会自动将其从场景中移除）
+            if (grabbed.parent) {
+                grabbed.parent.remove(grabbed);
+            }
+            // 销毁几何体和材质，释放 GPU 资源
+            grabbed.geometry?.dispose();
+            if (grabbed.material) {
+                if (Array.isArray(grabbed.material)) {
+                    grabbed.material.forEach(m => m.dispose());
+                } else {
+                    grabbed.material.dispose();
+                }
+            }
+            sim.current.arm.grabbedObject = null;
+            sim.current.arm.hasBall = false;
+            sim.current.arm.state = 'idle';
+        }
+
         while (group.children.length > 0) {
             group.remove(group.children[0]);
         }
         sim.current.walls = [];
 
         let sizeVal = 20;
-        if (sceneSize === 'small') sizeVal = 10;
+        if (sceneSize === 'small') sizeVal = 14;
         if (sceneSize === 'large') sizeVal = 30;
 
         const halfSize = sizeVal / 2;
@@ -522,6 +544,19 @@ export default function App() {
         group.add(bucket);
         sim.current.walls.push(bucket);
         sim.current.bucket = bucket;
+
+        // 场景切换后复位小车和目标球
+        sim.current.robotState.x = 0;
+        sim.current.robotState.z = 0;
+        sim.current.robotState.rotation = Math.PI;
+        sim.current.robotState.velocity = 0;
+        sim.current.robotState.angularVelocity = 0;
+        setActiveKeys({});
+        setActionChunks([]);
+        if (sim.current.robot) {
+            sim.current.robot.position.set(0, 0, 0);
+            sim.current.robot.rotation.y = Math.PI;
+        }
 
         addLog(`Scene updated: ${sceneType}, Size: ${sceneSize}, Complexity: ${sceneComplexity}`, 'info');
     }, [sceneType, sceneSize, sceneComplexity, addLog]);
@@ -731,13 +766,19 @@ export default function App() {
         };
 
         sim.current.walls.forEach(wall => {
+            // 跳过被机械臂抓取的对象——抓取后对象挂载在夹爪下，其 position 是局部坐标，
+            // 直接用作世界坐标进行碰撞检测会产生"隐形障碍物"
+            if (sim.current.arm?.grabbedObject === wall) return;
             if (checkAABB(wall.position.x, wall.position.z, wall.userData.w, wall.userData.d)) {
                 collided = true;
             }
         });
 
-        if (sim.current.target && checkAABB(sim.current.target.position.x, sim.current.target.position.z, sim.current.target.userData.w, sim.current.target.userData.d)) {
-            collided = true;
+        // 球被抓取时无需单独检测（已在 walls 循环中跳过）
+        if (sim.current.target && sim.current.arm?.grabbedObject !== sim.current.target) {
+            if (checkAABB(sim.current.target.position.x, sim.current.target.position.z, sim.current.target.userData.w, sim.current.target.userData.d)) {
+                collided = true;
+            }
         }
 
         sim.current.isColliding = collided; // Expose collision state
@@ -1460,6 +1501,9 @@ export default function App() {
 
         addLog(`Initializing ACT training (Chunk Size: ${actService.CHUNK_SIZE})...`, 'info');
 
+        // 让出主线程，确保 React 先渲染 loading 状态再开始数据预处理
+        await new Promise(r => setTimeout(r, 0));
+
         // Prepare Data with Action Chunking
         const data = actService.prepareTrainingData(sim.current.episodes);
 
@@ -1475,10 +1519,12 @@ export default function App() {
         sim.current.model = model;
 
         // Train
-        await actService.trainModel(model, data, (epoch, logs) => {
+        await actService.trainModel(model, data, async (epoch, logs) => {
             const progress = ((epoch + 1) / 50) * 100;
             setTrainingProgress(progress);
             setTrainingStatus(`Epoch ${epoch + 1}/50 - Loss: ${logs?.loss.toFixed(4)}`);
+            // 每个 epoch 结束后让出主线程，允许浏览器处理 UI 渲染和用户交互
+            await tf.nextFrame();
         });
 
         await finishTraining();
@@ -2254,7 +2300,14 @@ export default function App() {
                                 disabled={trainingMode === 'cloud' ? !selectedCloudDataset : (episodesCount === 0 || isTraining)}
                                 className={`w-full ${trainingMode === 'cloud' ? 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500' : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500'} text-white py-3 rounded-lg font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50`}
                             >
-                                {trainingMode === 'cloud' ? '开始云端训练' : '开始训练模型'}
+                                {isTraining ? (
+                                    <span className="flex items-center justify-center gap-2">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        正在训练模型
+                                    </span>
+                                ) : (
+                                    trainingMode === 'cloud' ? '开始云端训练' : '开始训练模型'
+                                )}
                             </button>
                             <div className="space-y-2">
                                 <div className="flex justify-between text-xs text-slate-400">

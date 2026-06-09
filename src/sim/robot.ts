@@ -27,6 +27,9 @@ export function createRobot(scene: THREE.Scene) {
     
     const wheelMeshes: THREE.Group[] = [];
 
+    // 胎面花纹：与十字轮毂对齐，四条均匀分布
+    const treadGeo = new THREE.BoxGeometry(0.05, 0.24, 0.03);
+
     wheelPositions.forEach(pos => {
         const wheelGroup = new THREE.Group();
         wheelGroup.position.set(pos.x, 0.3, pos.z);
@@ -35,13 +38,27 @@ export function createRobot(scene: THREE.Scene) {
         const wheel = new THREE.Mesh(wheelGeo, wheelMat);
         wheel.castShadow = true;
         wheelGroup.add(wheel);
-        
+
         const spoke1 = new THREE.Mesh(spokeGeo, spokeMat);
         const spoke2 = new THREE.Mesh(spokeGeo, spokeMat);
         spoke2.rotation.y = Math.PI / 2;
-        
+
         wheelGroup.add(spoke1);
         wheelGroup.add(spoke2);
+
+        // 四条胎面花纹，与十字轮毂对齐
+        for (let i = 0; i < 4; i++) {
+            const angle = (i / 4) * Math.PI * 2;
+            const tread = new THREE.Mesh(treadGeo, spokeMat);
+            tread.position.set(
+                Math.cos(angle) * 0.3,
+                0,
+                Math.sin(angle) * 0.3
+            );
+            tread.rotation.y = -angle;
+            tread.castShadow = true;
+            wheelGroup.add(tread);
+        }
 
         robot.add(wheelGroup);
         wheelMeshes.push(wheelGroup);

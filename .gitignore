@@ -9,3 +9,5 @@ coverage/
 *-lock.json
 *-lock.yaml
 .idea
+.claude
+AKA-Sim/
